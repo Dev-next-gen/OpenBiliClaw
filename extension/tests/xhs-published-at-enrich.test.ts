@@ -59,3 +59,21 @@ test("enrichNotesWithPublishedAt swallows loader failures", async () => {
   assert.equal(enriched, 0);
   assert.equal(notes[0].published_at, undefined);
 });
+
+test("enrichNotesWithPublishedAt targets search-result card URLs", async () => {
+  const noteId = "6aa69c06000000002603b0f1";
+  const notes = [
+    { url: `https://www.xiaohongshu.com/search_result/${noteId}?xsec_token=SEARCH_TOKEN` },
+  ] as { url: string; published_at?: string | number }[];
+  const stats = { targets: 0, attempted: 0, enriched: 0 };
+
+  const enriched = await enrichNotesWithPublishedAt(notes, {
+    stats,
+    loader: async (_url, requestedNoteId) =>
+      requestedNoteId === noteId ? 1789303814000 : undefined,
+  });
+
+  assert.equal(stats.targets, 1);
+  assert.equal(enriched, 1);
+  assert.equal(notes[0].published_at, 1789303814000);
+});

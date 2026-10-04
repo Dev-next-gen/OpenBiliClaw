@@ -75,3 +75,22 @@ test("mergePublishedTimes fills notes by note_id or URL and skips existing value
   assert.equal(notes[1].published_at, 1789183829000);
   assert.equal(notes[2].published_at, 1);
 });
+
+test("search-result card URLs resolve to a note id for the published_at pipeline", () => {
+  // The exact URL shape the card collector emits for the 2026-07
+  // /search_result/{note_id} rollout — see the "search-result note links stay
+  // aligned across selector and URL parser" case in xhs-passive.test.ts.
+  const searchCardUrl = `https://www.xiaohongshu.com/search_result/${NOTE_ID}?xsec_token=SEARCH_TOKEN`;
+  assert.equal(extractNoteIdFromUrl(searchCardUrl), NOTE_ID);
+});
+
+test("mergePublishedTimes attaches sniffer times to search-result cards", () => {
+  const notes = [
+    { url: `https://www.xiaohongshu.com/search_result/${NOTE_ID}?xsec_token=SEARCH_TOKEN` },
+  ] as { url: string; published_at?: string | number }[];
+
+  const merged = mergePublishedTimes(notes, [{ note_id: NOTE_ID, published_at: 1789303814000 }]);
+
+  assert.equal(merged, 1);
+  assert.equal(notes[0].published_at, 1789303814000);
+});

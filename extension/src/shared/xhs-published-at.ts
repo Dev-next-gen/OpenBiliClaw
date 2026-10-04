@@ -56,11 +56,18 @@ function pickTime(record: Record<string, unknown> | undefined): number | undefin
   return undefined;
 }
 
+/**
+ * Read the note id out of a card URL. The accepted routes must stay aligned
+ * with the collector's `NOTE_ANCHOR_SELECTOR` / `NOTE_PATH_PATTERNS`, which
+ * also harvest the `/search_result/{note_id}` links xhs search started
+ * emitting in the 2026-07 rollout — those cards are exactly the ones carrying
+ * no time field, so dropping them here strands the whole enrichment path.
+ */
 export function extractNoteIdFromUrl(rawUrl: string): string {
   if (!rawUrl) return "";
   try {
     const pathname = new URL(rawUrl, "https://www.xiaohongshu.com").pathname;
-    const match = pathname.match(/\/(?:explore|discovery\/item)\/([0-9a-fA-F]{24})/);
+    const match = pathname.match(/\/(?:explore|discovery\/item|search_result)\/([0-9a-fA-F]{24})/);
     return match ? match[1] : "";
   } catch {
     return "";

@@ -6,6 +6,11 @@
 
 - 发布回执、商店审核状态及国内源码/安装包镜像范围见[发布与验证记录](testing/2026-10-04-release-0.3.226.md)；国内下载入口按实际已上传版本标注。
 
+### 修复：搜索卡 `/search_result/{id}` 的精确发布时间丢失（2026-10-04）
+
+- `shared/xhs-published-at.ts` 的 `extractNoteIdFromUrl` 只识别 `/explore/{id}` 与 `/discovery/item/{id}`，而卡片采集器（`NOTE_ANCHOR_SELECTOR` / `NOTE_PATH_PATTERNS`）会按 2026-07 rollout 原样保留 `/search_result/{id}` 的 note URL。因此在 `need_published_at` 打开时，这类笔记既不会进入隐藏 iframe 补全名单（`stats.targets` 计 0），也无法与 MAIN-world sniffer 上报的 `(note_id, time)` 对齐，精确发布时间被静默丢弃。
+- note id 解析补上 `search_result` 路由，与平台适配器、页面类型判定、原生保存身份校验和后端 `sources/identity_keys.py` 的同一集合对齐。回归：`extension/tests/xhs-published-at.test.ts`、`extension/tests/xhs-published-at-enrich.test.ts`。
+
 ### 修复：本地向量模型自动回退 CPU（2026-10-04）
 
 - 本机真实端到端复验通过：独立 Ollama + 应用 HTTP + 浏览器按钮，实际终止 runner 后恢复、8 次并发、CPU 持续失败与恢复、进程重启、1024 维向量及 SQLite 缓存均已核验；[实测证据](testing/2026-10-04-ollama-cpu-fallback.md#本机端到端复验真实进程故障真实-http真实向量)。Intel Mac 实际使用 CPU，Windows GPU 迁移仍待对应硬件验收。
