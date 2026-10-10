@@ -24,6 +24,7 @@ const READ_ONLY_VERIFICATION_PLATFORMS = new Set<NativeSavePlatform>([
   "xiaohongshu",
   "youtube",
   "zhihu",
+  "tiktok",
 ]);
 
 export interface NativeSaveRunnerOptions {

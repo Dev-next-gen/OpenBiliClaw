@@ -1,0 +1,285 @@
+/**
+ * TikTok native save (favorite) content executor.
+ *
+ * TikTok's save surface is a single bookmark toggle on the video page's
+ * action bar — no playlist dialog (unlike YouTube) and no API replay
+ * (contract docs/platform-source-contract.tiktok.toml: the extension
+ * never reconstructs engagement POSTs). The flow mirrors douyin.ts:
+ * locate the exact correlated control, click it, then require positive
+ * checked-state evidence — an unobserved confirmation is
+ * native_confirmation_not_observed, never a guessed success
+ * (contract terminal_policy).
+ *
+ * The environment is injectable so unit tests drive a fake DOM-free
+ * harness; createTiktokBrowserEnvironment is the real DOM adapter.
+ */
+
+import type { NativeSaveTask } from "../../shared/native-save.ts";
+import { waitForNativeSaveReadiness } from "./readiness.ts";
+
+export interface TiktokSaveControl {
+  isSelected(): boolean;
+  click(): void;
+}
+
+export interface TiktokNativeSaveEnvironment {
+  currentUrl: string;
+  isLoggedIn(): boolean;
+  isUnavailable(): boolean;
+  isContentReady(): boolean;
+  rateLimitFingerprint(): string;
+  findFavoriteControls(contentId: string): TiktokSaveControl[];
+  sleep(ms: number): Promise<void>;
+}
+
+const CONFIRM_ATTEMPTS = 100;
+const CONFIRM_INTERVAL_MS = 100;
+const CONTENT_ID_PATTERN = /^[0-9]{6,30}$/;
+const TARGET_LABEL = "TikTok Favorites";
+
+/**
+ * Exact video identity from a TikTok URL. Strict: https, tiktok.com host,
+ * /@<handle>/video/<digits> path, no query or fragment — the same shape
+ * the backend's `_native_save_e2e_content_id_from_url` accepts.
+ */
+export function tiktokRouteVideoId(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
+    if (url.hash || url.search) return null;
+    if (url.hostname !== "tiktok.com" && !url.hostname.endsWith(".tiktok.com")) return null;
+    const match = /^\/@[\w.-]+\/video\/([0-9]{6,30})\/?$/.exec(url.pathname);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function isSupported(task: NativeSaveTask, currentUrl: string): boolean {
+  return (
+    task.platform === "tiktok" &&
+    task.platform_slug === "tiktok" &&
+    task.item_key === `tiktok:${task.content_id}` &&
+    task.content_type === "video" &&
+    CONTENT_ID_PATTERN.test(task.content_id) &&
+    tiktokRouteVideoId(task.content_url) === task.content_id &&
+    tiktokRouteVideoId(currentUrl) === task.content_id
+  );
+}
+
+function hasTargetContract(task: NativeSaveTask): boolean {
+  return (
+    task.target_label === TARGET_LABEL &&
+    task.resolved_action === "favorite" &&
+    (task.requested_action === "favorite" || task.requested_action === "watch_later")
+  );
+}
+
+async function confirmSelected(
+  task: NativeSaveTask,
+  env: TiktokNativeSaveEnvironment,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < CONFIRM_ATTEMPTS; attempt += 1) {
+    const controls = env.findFavoriteControls(task.content_id);
+    if (controls.length === 1 && controls[0].isSelected()) return true;
+    if (attempt + 1 < CONFIRM_ATTEMPTS) await env.sleep(CONFIRM_INTERVAL_MS);
+  }
+  return false;
+}
+
+function hasNewRateLimit(before: string, after: string): boolean {
+  const baseline = new Set(before.split("\n").filter(Boolean));
+  return after.split("\n").filter(Boolean).some((entry) => !baseline.has(entry));
+}
+
+export async function saveTiktok(
+  task: NativeSaveTask,
+  env: TiktokNativeSaveEnvironment = createTiktokBrowserEnvironment(),
+): Promise<unknown> {
+  if (!isSupported(task, env.currentUrl) || env.isUnavailable()) {
+    return { status: "unsupported", error_code: "unsupported_content_type" };
+  }
+  if (!hasTargetContract(task)) return { status: "failed", error_code: "native_save_failed" };
+  const contentReady = await waitForNativeSaveReadiness(
+    () => !env.isLoggedIn() || env.isUnavailable() || env.isContentReady(),
+    env.sleep,
+  );
+  if (!contentReady) return { status: "failed", error_code: "native_content_not_ready" };
+  // Login evidence must be a positive signed-in marker observed in the
+  // page (avatar/nav profile), never cookie presence (contract [auth]).
+  if (!env.isLoggedIn()) return { status: "login_required" };
+  if (env.isUnavailable()) return { status: "unsupported", error_code: "unsupported_content_type" };
+  if (!env.isContentReady()) return { status: "failed", error_code: "native_content_not_ready" };
+  const initial = env.findFavoriteControls(task.content_id);
+  if (initial.length !== 1) return { status: "failed", error_code: "native_control_not_found" };
+  if (initial[0].isSelected()) return { status: "already_synced" };
+  const rateLimitBefore = env.rateLimitFingerprint();
+
+  try {
+    initial[0].click();
+  } catch {
+    return { status: "failed", error_code: "native_save_failed" };
+  }
+  if (await confirmSelected(task, env)) return { status: "synced" };
+  return hasNewRateLimit(rateLimitBefore, env.rateLimitFingerprint())
+    ? { status: "rate_limited" }
+    : { status: "failed", error_code: "native_confirmation_not_observed" };
+}
+
+/** Read-only membership re-check after reload; never clicks the control. */
+export async function verifyTiktok(
+  task: NativeSaveTask,
+  env: TiktokNativeSaveEnvironment = createTiktokBrowserEnvironment(),
+): Promise<unknown> {
+  if (!isSupported(task, env.currentUrl) || env.isUnavailable()) {
+    return { status: "unsupported", error_code: "unsupported_content_type" };
+  }
+  if (!hasTargetContract(task)) return { status: "failed", error_code: "native_save_failed" };
+  const contentReady = await waitForNativeSaveReadiness(
+    () => !env.isLoggedIn() || env.isUnavailable() || env.isContentReady(),
+    env.sleep,
+  );
+  if (!contentReady) return { status: "failed", error_code: "native_content_not_ready" };
+  if (!env.isLoggedIn()) return { status: "login_required" };
+  if (env.isUnavailable()) return { status: "unsupported", error_code: "unsupported_content_type" };
+  if (!env.isContentReady()) return { status: "failed", error_code: "native_content_not_ready" };
+  const controls = env.findFavoriteControls(task.content_id);
+  if (controls.length !== 1) return { status: "failed", error_code: "native_control_not_found" };
+  return controls[0].isSelected()
+    ? { status: "already_synced" }
+    : { status: "failed", error_code: "native_confirmation_not_observed" };
+}
+
+// ---------------------------------------------------------------------------
+// Real DOM environment
+// ---------------------------------------------------------------------------
+
+const FAVORITE_CONTROL_SELECTOR = [
+  "[data-e2e='favorite-icon']",
+  "[data-e2e='video-favorite']",
+  "[data-e2e='browse-video-favorite']",
+  "button[aria-label*='Favorite']",
+  "[role='button'][aria-label*='Favorite']",
+  "button[aria-label*='收藏']",
+  "[role='button'][aria-label*='收藏']",
+].join(", ");
+
+const SIGNED_IN_SELECTOR = [
+  "[data-e2e='nav-profile']",
+  "[data-e2e='profile-icon']",
+  "[data-e2e='upload-icon']",
+  "[data-e2e='nav-inbox']",
+].join(", ");
+
+const LOGIN_WALL_SELECTOR = [
+  "[data-e2e='top-login-button']",
+  "[data-e2e='login-modal']",
+  "[role='dialog'] form[action*='login']",
+].join(", ");
+
+const UNAVAILABLE_SELECTOR = [
+  "[data-e2e='video-unavailable']",
+  "[data-e2e='error-page']",
+].join(", ");
+
+const RATE_LIMIT_PATTERN =
+  /(?:too many requests|try again later|rate limit|操作频繁|请求频繁|稍后再试|429)/i;
+const RATE_LIMIT_SELECTOR = "[role='alert'], [data-e2e='toast'], [class*='toast']";
+
+function isEffectivelyVisible(element: HTMLElement, root: Document): boolean {
+  const view = root.defaultView ?? element.ownerDocument?.defaultView;
+  let current: HTMLElement | null = element;
+  while (current) {
+    if (
+      current.hidden || current.hasAttribute("hidden") || current.hasAttribute("inert") ||
+      current.getAttribute("aria-hidden") === "true" || current.style.display === "none" ||
+      current.style.visibility === "hidden"
+    ) {
+      return false;
+    }
+    if (view) {
+      const style = view.getComputedStyle(current);
+      if (style.display === "none" || style.visibility === "hidden") return false;
+    }
+    current = current.parentElement;
+  }
+  return true;
+}
+
+function selected(element: HTMLElement): boolean {
+  if (
+    element.getAttribute("aria-pressed") === "true" ||
+    element.getAttribute("aria-checked") === "true" ||
+    element.getAttribute("data-e2e-state") === "active"
+  ) {
+    return true;
+  }
+  const label = (
+    element.getAttribute("aria-label") ?? element.title ?? element.textContent ?? ""
+  ).trim();
+  return /(?:Remove from Favorites|取消收藏|已收藏)/.test(label);
+}
+
+function favoriteControls(root: Document, currentUrl: string, contentId: string): HTMLElement[] {
+  if (tiktokRouteVideoId(currentUrl) !== contentId) return [];
+  return Array.from(root.querySelectorAll<HTMLElement>(FAVORITE_CONTROL_SELECTOR)).filter(
+    (element) => isEffectivelyVisible(element, root),
+  );
+}
+
+export function createTiktokBrowserEnvironment(
+  root: Document = document,
+  currentUrl: string = location.href,
+): TiktokNativeSaveEnvironment {
+  const rateElementIds = new WeakMap<Element, number>();
+  let nextRateElementId = 1;
+  return {
+    currentUrl,
+    isLoggedIn() {
+      // Fail closed: a positive signed-in marker is required AND no login
+      // wall may be visible. Absence of both means logged out.
+      const marker = Array.from(root.querySelectorAll<HTMLElement>(SIGNED_IN_SELECTOR)).some(
+        (element) => isEffectivelyVisible(element, root),
+      );
+      if (!marker) return false;
+      return !Array.from(root.querySelectorAll<HTMLElement>(LOGIN_WALL_SELECTOR)).some(
+        (element) => isEffectivelyVisible(element, root),
+      );
+    },
+    isUnavailable() {
+      return Array.from(root.querySelectorAll<HTMLElement>(UNAVAILABLE_SELECTOR)).some(
+        (element) => isEffectivelyVisible(element, root),
+      );
+    },
+    isContentReady() {
+      const contentId = tiktokRouteVideoId(currentUrl);
+      return contentId !== null && favoriteControls(root, currentUrl, contentId).length > 0;
+    },
+    rateLimitFingerprint() {
+      return Array.from(root.querySelectorAll<HTMLElement>(RATE_LIMIT_SELECTOR))
+        .filter((element) => {
+          const text = element.textContent?.trim() ?? "";
+          return RATE_LIMIT_PATTERN.test(text) && isEffectivelyVisible(element, root);
+        })
+        .map((element) => {
+          let id = rateElementIds.get(element);
+          if (id === undefined) {
+            id = nextRateElementId;
+            nextRateElementId += 1;
+            rateElementIds.set(element, id);
+          }
+          return `${id}:${element.textContent?.trim() ?? ""}`;
+        })
+        .join("\n");
+    },
+    findFavoriteControls(contentId) {
+      return favoriteControls(root, currentUrl, contentId).map((element) => ({
+        isSelected: () => selected(element),
+        click: () => element.click(),
+      }));
+    },
+    sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    },
+  };
+}

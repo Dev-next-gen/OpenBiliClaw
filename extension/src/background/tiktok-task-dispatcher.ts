@@ -37,11 +37,20 @@ import {
 } from "../content/tt/task-executor.ts";
 import { apiUrl } from "../shared/backend-endpoint.ts";
 import { authenticatedFetch } from "../shared/auth.ts";
+import {
+  isNativeSaveTask,
+  type NativeSaveResult,
+  type NativeSaveTask,
+} from "../shared/native-save.ts";
 import { withTaskTabMarker } from "../shared/task-tab.ts";
 import {
   releaseDispatcherMutex,
   tryAcquireDispatcherMutex,
 } from "./dispatcher-mutex.ts";
+import {
+  ensureNativeSaveTaskRecovery,
+  runNativeSaveTask,
+} from "./native-save-task-runner.ts";
 import { createTaskTab } from "./task-tab.ts";
 
 const TIKTOK_TASK_MARKER = "openbiliclaw_tiktok_task";
@@ -64,7 +73,7 @@ const DEFAULT_STAGNANT_ROUNDS = 5;
 // Task types
 // ---------------------------------------------------------------------------
 
-export interface TiktokTask {
+export interface TiktokScopeTask {
   id: string;
   /** The task type IS the bootstrap scope. */
   type: TiktokScope;
@@ -80,6 +89,8 @@ export interface TiktokTask {
   };
 }
 
+export type TiktokTask = TiktokScopeTask | NativeSaveTask;
+
 export interface TiktokTaskResult {
   task_id: string;
   status: "ok" | "empty" | "partial" | "degraded" | "failed";
@@ -88,6 +99,8 @@ export interface TiktokTaskResult {
   error?: string;
   debug?: Record<string, unknown>;
 }
+
+export type TiktokTaskCallbackResult = TiktokTaskResult | NativeSaveResult;
 
 export type TiktokTaskExecutionDisposition = "accepted" | "declined";
 
@@ -101,6 +114,9 @@ function isValidLimitField(value: unknown): boolean {
 }
 
 export function isValidTiktokTask(task: unknown): task is TiktokTask {
+  if (isNativeSaveTask(task)) {
+    return task.platform === "tiktok" && task.platform_slug === "tiktok";
+  }
   if (typeof task !== "object" || task === null) return false;
   const t = task as Record<string, unknown>;
   if (typeof t.id !== "string" || !t.id) return false;
@@ -118,21 +134,22 @@ export function isValidTiktokTask(task: unknown): task is TiktokTask {
   return true;
 }
 
-function taskLimit(task: TiktokTask, key: "max_items" | "max_scroll_rounds" | "max_stagnant_scroll_rounds"): number | undefined {
+function taskLimit(task: TiktokScopeTask, key: "max_items" | "max_scroll_rounds" | "max_stagnant_scroll_rounds"): number | undefined {
   const topLevel = task[key];
   if (typeof topLevel === "number" && Number.isFinite(topLevel)) return topLevel;
   const nested = task.payload?.[key];
   return typeof nested === "number" && Number.isFinite(nested) ? nested : undefined;
 }
 
-export function buildTiktokTaskUrl(_task: TiktokTask): string {
+export function buildTiktokTaskUrl(task: TiktokTask): string {
+  if (task.type === "native_save") return task.content_url;
   // Every scope starts from the tiktok.com homepage; the content script
   // drives click-based navigation from there (direct deep links trip
   // risk control on the Douyin sibling; same discipline here).
   return withTaskTabMarker("https://www.tiktok.com/", TIKTOK_TASK_MARKER);
 }
 
-export function computeTiktokTaskTimeoutMs(task: TiktokTask): number {
+export function computeTiktokTaskTimeoutMs(task: TiktokScopeTask): number {
   const rounds = taskLimit(task, "max_scroll_rounds");
   const scrollBudget = rounds === undefined ? 0 : Math.max(0, Math.floor(rounds));
   return Math.min(
@@ -141,7 +158,7 @@ export function computeTiktokTaskTimeoutMs(task: TiktokTask): number {
   );
 }
 
-export function buildTiktokExecuteMessageData(task: TiktokTask): Record<string, unknown> {
+export function buildTiktokExecuteMessageData(task: TiktokScopeTask): Record<string, unknown> {
   return {
     task_id: task.id,
     scope: task.type,
@@ -162,7 +179,7 @@ let taskTabId: number | null = null;
 let ownsTaskTab = false;
 let taskTimeoutId: ReturnType<typeof setTimeout> | null = null;
 let taskDeadlineMs: number | null = null;
-let currentTask: TiktokTask | null = null;
+let currentTask: TiktokScopeTask | null = null;
 
 interface TaskProgress {
   task_id: string;
@@ -185,11 +202,11 @@ async function fetchNextTask(): Promise<TiktokTask | null> {
     if (!resp.ok) return null;
     const payload: unknown = await resp.json();
     if (isValidTiktokTask(payload)) return payload;
-    // GET /next-task atomically claimed whatever this was (e.g. a
-    // native_save task, which this dispatcher deliberately does not
-    // execute — there is no native-save/tiktok content executor yet).
-    // Fail it explicitly so the backend lease recovers instead of
-    // stranding in in_progress until the stale-claim timeout.
+    // GET /next-task atomically claimed whatever this was. A payload that
+    // is neither a scope task nor a well-formed native_save task (native
+    // save IS supported; this catches future unknown shapes) would strand
+    // the backend lease in in_progress — fail it explicitly so the queue
+    // recovers instead of waiting out the stale-claim timeout.
     const id = (payload as { id?: unknown } | null)?.id;
     if (typeof id === "string" && id) {
       await postTiktokTaskResult({
@@ -359,7 +376,7 @@ async function postRawTaskResult(
  * the pending slot survives either way and is flushed on the next wake.
  */
 export async function postTiktokTaskResult(
-  result: TiktokTaskResult,
+  result: TiktokTaskCallbackResult,
   transport: TiktokTaskResultTransport = TIKTOK_TASK_RESULT_TRANSPORT,
   options: TiktokTaskResultRetryOptions = {},
 ): Promise<void> {
@@ -390,7 +407,7 @@ export async function flushPendingTiktokTaskResult(
 // ---------------------------------------------------------------------------
 
 export interface PersistedTiktokTaskState {
-  task: TiktokTask;
+  task: TiktokScopeTask;
   task_tab_id: number | null;
   owns_task_tab: boolean;
   deadline_ms: number;
@@ -448,7 +465,7 @@ function clearPersistedTaskState(): Promise<void> {
 function parsePersistedTaskState(value: unknown): PersistedTiktokTaskState | null {
   if (typeof value !== "object" || value === null) return null;
   const record = value as Record<string, unknown>;
-  if (!isValidTiktokTask(record.task)) return null;
+  if (!isValidTiktokTask(record.task) || record.task.type === "native_save") return null;
   const task = record.task;
   if (typeof record.deadline_ms !== "number" || !Number.isFinite(record.deadline_ms)) {
     return null;
@@ -643,7 +660,7 @@ function cleanupTask(): void {
   void clearPersistedTaskState();
 }
 
-function armTaskTimeout(task: TiktokTask): void {
+function armTaskTimeout(task: TiktokScopeTask): void {
   armTaskDeadline(Date.now() + computeTiktokTaskTimeoutMs(task));
   void persistActiveTaskState();
 }
@@ -729,10 +746,68 @@ function sendScopeExecuteMessage(): void {
     });
 }
 
+export interface TiktokNativeSaveResultTransport {
+  resolveUrl: (path: string) => Promise<string>;
+  fetch: (input: string, init: RequestInit) => Promise<unknown>;
+}
+
+const TIKTOK_NATIVE_SAVE_RESULT_TRANSPORT: TiktokNativeSaveResultTransport = {
+  resolveUrl: apiUrl,
+  fetch: authenticatedFetch,
+};
+
+export async function postTiktokNativeSaveResult(
+  result: NativeSaveResult,
+  transport: TiktokNativeSaveResultTransport = TIKTOK_NATIVE_SAVE_RESULT_TRANSPORT,
+): Promise<void> {
+  try {
+    await transport.fetch(await transport.resolveUrl("/sources/tiktok/task-result"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(result),
+    });
+  } catch {
+    // Backend transient unavailability should not crash the service worker.
+  }
+}
+
+export interface TiktokNativeSaveDispatchDependencies {
+  run: (
+    task: NativeSaveTask,
+    platformSlug: "tiktok",
+    postResult: (result: NativeSaveResult) => Promise<void>,
+  ) => Promise<void>;
+  postResult: (result: NativeSaveResult) => Promise<void>;
+}
+
+/** Behavior seam used by executeTask and tests to keep native-result closure explicit. */
+export async function dispatchTiktokNativeSaveTask(
+  task: NativeSaveTask,
+  dependencies: TiktokNativeSaveDispatchDependencies,
+): Promise<void> {
+  await dependencies.run(task, "tiktok", dependencies.postResult);
+}
+
+const TIKTOK_NATIVE_SAVE_DISPATCH_DEPENDENCIES: TiktokNativeSaveDispatchDependencies = {
+  run: runNativeSaveTask,
+  postResult: postTiktokNativeSaveResult,
+};
+
 export async function executeTask(
   task: TiktokTask,
+  nativeDependencies: TiktokNativeSaveDispatchDependencies = TIKTOK_NATIVE_SAVE_DISPATCH_DEPENDENCIES,
   mutexAlreadyHeld: boolean = false,
 ): Promise<TiktokTaskExecutionDisposition> {
+  if (task.type === "native_save") {
+    if (taskInFlight) return "declined";
+    taskInFlight = true;
+    try {
+      await dispatchTiktokNativeSaveTask(task, nativeDependencies);
+    } finally {
+      taskInFlight = false;
+    }
+    return "accepted";
+  }
   if (taskInFlight) return "declined";
   // Direct callers acquire here. pollTiktokTaskOnce acquires before
   // claiming from the backend so a busy sibling dispatcher cannot strand
@@ -838,6 +913,16 @@ export async function handleTiktokScopeResult(result: TiktokScopeResult): Promis
 // ---------------------------------------------------------------------------
 
 async function reportDeclinedTask(task: TiktokTask): Promise<void> {
+  if (task.type === "native_save") {
+    await postTiktokTaskResult({
+      task_id: task.id,
+      item_key: task.item_key,
+      status: "failed",
+      error_code: "native_save_failed",
+      error_message: "dispatcher_busy_after_claim",
+    });
+    return;
+  }
   await postTiktokTaskResult({
     task_id: task.id,
     status: "failed",
@@ -857,7 +942,10 @@ export interface TiktokTaskPollDependencies {
 }
 
 const TIKTOK_TASK_POLL_DEPENDENCIES: TiktokTaskPollDependencies = {
-  ensureRecovery: ensureTiktokTaskRecovery,
+  ensureRecovery: async () => {
+    await ensureNativeSaveTaskRecovery();
+    await ensureTiktokTaskRecovery();
+  },
   canExecute: () => {
     try {
       return typeof globalThis.chrome?.tabs?.create === "function";
@@ -866,7 +954,8 @@ const TIKTOK_TASK_POLL_DEPENDENCIES: TiktokTaskPollDependencies = {
     }
   },
   fetchTask: fetchNextTask,
-  execute: async (task, mutexAlreadyHeld) => executeTask(task, mutexAlreadyHeld),
+  execute: async (task, mutexAlreadyHeld) =>
+    executeTask(task, TIKTOK_NATIVE_SAVE_DISPATCH_DEPENDENCIES, mutexAlreadyHeld),
   reportDeclined: reportDeclinedTask,
 };
 
@@ -890,6 +979,15 @@ export function pollTiktokTaskOnce(
     try {
       const task = await dependencies.fetchTask();
       if (!task) return;
+      if (task.type === "native_save") {
+        // Native-save owns a separate durable runner/recovery lifecycle and
+        // does not hold the scope-task mutex.
+        releaseDispatcherMutex(MUTEX_LABEL);
+        releaseOnExit = false;
+        const disposition = await dependencies.execute(task, false);
+        if (disposition === "declined") await dependencies.reportDeclined(task);
+        return;
+      }
       const disposition = await dependencies.execute(task, true);
       if (disposition === "declined") {
         await dependencies.reportDeclined(task);

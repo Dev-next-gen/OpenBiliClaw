@@ -10,16 +10,33 @@ import {
   buildTiktokExecuteMessageData,
   buildTiktokTaskUrl,
   computeTiktokTaskTimeoutMs,
+  executeTask,
   flushPendingTiktokTaskResult,
   isValidTiktokTask,
   pollTiktokTaskNow,
   pollTiktokTaskOnce,
+  postTiktokNativeSaveResult,
   postTiktokTaskResult,
   resetTiktokTaskStateForTest,
   TIKTOK_PENDING_RESULT_LOCAL_KEY,
   type TiktokTask,
 } from "../src/background/tiktok-task-dispatcher.ts";
 import { installChromeMock } from "./helpers/chrome-mock.ts";
+import type { NativeSaveResult, NativeSaveTask } from "../src/shared/native-save.ts";
+
+const nativeTask: NativeSaveTask = {
+  id: "123e4567-e89b-42d3-a456-426614174099",
+  type: "native_save",
+  platform: "tiktok",
+  platform_slug: "tiktok",
+  item_key: "tiktok:7234567890123456789",
+  content_id: "7234567890123456789",
+  content_url: "https://www.tiktok.com/@creator/video/7234567890123456789",
+  content_type: "video",
+  requested_action: "favorite",
+  resolved_action: "favorite",
+  target_label: "TikTok Favorites",
+};
 
 type DispatcherMutexGlobal = typeof globalThis & {
   __OBC_DISPATCHER_MUTEX_HOLDER__?: string;
@@ -65,6 +82,45 @@ test("isValidTiktokTask rejects malformed input", () => {
     isValidTiktokTask({ id: "t", type: "tt_like", payload: { max_items: "300" } }),
     false,
   );
+});
+
+test("tiktok task native_save union closes through the exact authenticated result contract", async () => {
+  assert.equal(isValidTiktokTask(nativeTask), true);
+  assert.equal(
+    isValidTiktokTask({ ...nativeTask, platform: "douyin", platform_slug: "dy" }),
+    false,
+  );
+  assert.equal(buildTiktokTaskUrl(nativeTask), nativeTask.content_url);
+  const result: NativeSaveResult = {
+    task_id: nativeTask.id,
+    item_key: nativeTask.item_key,
+    status: "synced",
+    error_code: "",
+    error_message: "",
+  };
+  const calls: unknown[] = [];
+  await executeTask(nativeTask, {
+    run: async (receivedTask, slug, postResult) => {
+      calls.push([receivedTask, slug]);
+      await postResult(result);
+    },
+    postResult: async (received) => { calls.push(received); },
+  });
+  assert.deepEqual(calls, [[nativeTask, "tiktok"], result]);
+
+  const requests: unknown[] = [];
+  await postTiktokNativeSaveResult(result, {
+    resolveUrl: async (path) => `http://127.0.0.1:8420/api${path}`,
+    fetch: async (input, init) => { requests.push([input, init]); },
+  });
+  assert.deepEqual(requests, [[
+    "http://127.0.0.1:8420/api/sources/tiktok/task-result",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(result),
+    },
+  ]]);
 });
 
 test("buildTiktokTaskUrl lands on the tiktok.com homepage with the task marker", () => {
@@ -396,6 +452,28 @@ test("a declined executor reports the claimed task and releases the mutex", asyn
   const shared = globalThis as DispatcherMutexGlobal;
   assert.deepEqual(declined, [likeTask.id]);
   assert.equal(shared.__OBC_DISPATCHER_MUTEX_HOLDER__, undefined);
+  clearDispatcherMutex();
+});
+
+test("native-save releases the scope-task mutex before durable execution", async () => {
+  clearDispatcherMutex();
+  const calls: Array<{ task: NativeSaveTask; mutexAlreadyHeld: boolean; holder?: string }> = [];
+  await pollTiktokTaskOnce({
+    ensureRecovery: async () => {},
+    fetchTask: async () => nativeTask,
+    execute: async (task, mutexAlreadyHeld) => {
+      const shared = globalThis as DispatcherMutexGlobal;
+      calls.push({
+        task: task as NativeSaveTask,
+        mutexAlreadyHeld,
+        holder: shared.__OBC_DISPATCHER_MUTEX_HOLDER__,
+      });
+      return "accepted";
+    },
+    reportDeclined: async () => {},
+  });
+
+  assert.deepEqual(calls, [{ task: nativeTask, mutexAlreadyHeld: false, holder: undefined }]);
   clearDispatcherMutex();
 });
 

@@ -37,6 +37,8 @@ import {
   type TiktokScopeExecuteMessage,
   type TiktokScopeResult,
 } from "./tt/task-executor.ts";
+import { installNativeSaveExecutor } from "./native-save/runtime.ts";
+import { saveTiktok, verifyTiktok } from "./native-save/tiktok.ts";
 
 const SCROLL_DELAY_MS = 1_500;
 const NAV_SETTLE_MS = 2_500;
@@ -446,6 +448,9 @@ export function registerTiktokScopeExecutor(): void {
 
 if (typeof chrome !== "undefined" && chrome.runtime) {
   registerTiktokScopeExecutor();
+  if (chrome.runtime.onMessage) {
+    installNativeSaveExecutor("tiktok", saveTiktok, verifyTiktok);
+  }
   // eslint-disable-next-line no-console
   console.debug("[OpenBiliClaw] tiktok content script registered (isolated world)");
 }
