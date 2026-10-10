@@ -289,6 +289,9 @@ task shape、mode/scope 和 cap 由后端冻结。Discover 只接受 `topic` / `
 |---|---|---|
 | `POST /api/sources/bili/task-result` | ✅ | B 站扩展搜索任务 payload 带 `discovery_lane="recent"` 时，结果仍以 `source_strategy="bili-extension-search"` 进入统一 evaluator，同时保存 `source_context="bili-extension-search:recent"` 和 raw lane provenance；该标记不改变相关性、阈值或 admission。 |
 | `GET /api/sources/dy/next-task` | ✅ | 对 legacy discovery 的 `dy_tasks` 执行 durable source-wide single-flight：`BEGIN IMMEDIATE` 内若已有未超过 15 分钟的 `in_progress` lease，则返回 bodyless 204，不让另一个扩展 ID/Profile 领取第二条任务；过期或缺失 `claimed_at` 的 lease 可按 FIFO 重领。此门禁不涵盖先于 legacy queue 检查的 native-save job。 |
+| `GET /api/sources/tiktok/next-task` | ✅ | 对 `tiktok_tasks` 执行与抖音相同的 durable source-wide single-flight 领取（`BEGIN IMMEDIATE` + 15 分钟 stale lease 重领）；无任务返回 bodyless 204。scheduler 增量任务在来源或总开关关闭时先被标记 `failed`，不参与领取。 |
+| `POST /api/sources/tiktok/task-result` | ✅ | 接受扩展 dispatch 的 `partial / ok / degraded / empty / failed` 结果。`ok / degraded / empty`（`empty` 仅限 `bootstrap_profile`）走两阶段 staged completion：先在单事务冻结第一份 canonical payload 与 staged marker，再经 `tiktok_bootstrap_videos_to_events` 重放事件入口并写 seen-key，最后只翻 terminal status；`failed` 直接落终态。scope 映射：点赞→`like`、收藏→`favorite`、观看历史→`view`、关注→`follow`。 |
+| `POST /api/sources/tiktok/kick` | ✅ | 经 `/api/runtime-stream` 广播 `tiktok_task_available`，让扩展 dispatcher 立即轮询而不是等下一个 alarm；幂等、best-effort，失败不影响任务状态。 |
 
 抖音的 15 分钟 stale lease 与 producer 的 15 分钟基础设施失败退避来自 2026-08-09 真实扩展 E2E：正常任务约 15–35 秒，而执行上下文丢失会耗尽 180 秒 watchdog。它们是防止重复 claim/分钟级重试风暴的工程安全值，不是抖音官方限额；任务 watchdog、lease 或调度 cadence 改动时必须重新校准。
 

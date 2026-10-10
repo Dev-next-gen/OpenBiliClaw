@@ -2695,6 +2695,7 @@ class TestBackendAPI:
         import openbiliclaw.soul.engine as soul_engine_module
         import openbiliclaw.sources.bili_tasks as bili_tasks_module
         import openbiliclaw.sources.dy_tasks as dy_tasks_module
+        import openbiliclaw.sources.tiktok_tasks as tiktok_tasks_module
         import openbiliclaw.sources.x_tasks as x_tasks_module
         import openbiliclaw.sources.xhs_tasks as xhs_tasks_module
         import openbiliclaw.sources.yt_tasks as yt_tasks_module
@@ -2850,6 +2851,10 @@ class TestBackendAPI:
             def __init__(self, database: object) -> None:
                 self.database = database
 
+        class FakeTiktokTaskQueue:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
         class FakeZhihuTaskQueue:
             def __init__(self, database: object) -> None:
                 self.database = database
@@ -2962,6 +2967,7 @@ class TestBackendAPI:
         monkeypatch.setattr(account_sync_module, "AccountSyncService", FakeAccountSyncService)
         monkeypatch.setattr(bili_tasks_module, "BiliTaskQueue", FakeBiliTaskQueue)
         monkeypatch.setattr(dy_tasks_module, "DyTaskQueue", FakeDyTaskQueue)
+        monkeypatch.setattr(tiktok_tasks_module, "TiktokTaskQueue", FakeTiktokTaskQueue)
         monkeypatch.setattr(x_tasks_module, "XCreatorStore", FakeXCreatorStore)
         monkeypatch.setattr(xhs_tasks_module, "XhsTaskQueue", FakeXhsTaskQueue)
         monkeypatch.setattr(xhs_tasks_module, "XhsCreatorStore", FakeXhsCreatorStore)

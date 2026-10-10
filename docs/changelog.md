@@ -4,6 +4,14 @@
 
 ## 未发布：TikTok 源后端缺口修复与前端展示面补全（issue #88）
 
+### 新增：TikTok 升级为 full 来源——后端浏览器任务基建（2026-10-11）
+
+- 新增 `sources/tiktok_tasks.py`：`TiktokTaskQueue`（独立 `tiktok_tasks` 表，镜像抖音的 single-flight claim / 15 分钟 stale lease / 每日预算）与 bootstrap 事件转换；scope 为 `tt_like` / `tt_collect` / `tt_history` / `tt_follow`（仓库首个观看历史类 scope），事件映射 like→like、collect→favorite、history→view、follow→follow，信号强度 0.85 / 1.0 / 0.35 / 0.6。
+- 五处注册同步完成：`task_result_protocol._TASK_TABLES`（两阶段 staged completion）、`source_bootstrap._BOOTSTRAP_TASK_TABLES` 与 `enqueue_tiktok_bootstrap` / `seed_guided_init_attempts`（`empty` 证据不足不 seed）、`bootstrap_state` 的 `tiktok_seen_item_keys`、`source_incremental_sync` 的 `SOURCE_ORDER` / `_TASK_SPECS` / `_SOURCE_CONFIG_ALIASES` / `_SOURCE_INTERVAL_FIELDS`。
+- 新增 `GET /api/sources/tiktok/next-task`（bodyless 204）、`POST /api/sources/tiktok/task-result`（partial/ok/degraded/empty/failed，完整两阶段 staged completion）与 `POST /api/sources/tiktok/kick`。
+- 配置面：`sources.tiktok.incremental_enabled`（默认 `false`）与 `scheduler.tiktok_incremental_hours`（缺省继承全局）落地 dataclass / TOML 解析 / 校验 / `PUT /api/config` / `config.example.toml`；`source_incremental_enabled` 总开关默认关闭不变。
+- guided init 接线（`_INIT_SOURCE_ORDER` / `_PLATFORM_SOURCE_FIELDS`）与扩展执行器属于后续步骤；`tests/test_tiktok_contract.py` 的旧排除断言按升级验收台账在后续步骤统一反转。
+
 ### 修复：TikTok 来源交付验收（2026-10-04）
 
 - 修复插件来源关闭后无法重新开启：移除包裹启用框的卡片祖先 `aria-disabled`，保留停用卡片折叠限制；补执行真实状态同步函数的回归。

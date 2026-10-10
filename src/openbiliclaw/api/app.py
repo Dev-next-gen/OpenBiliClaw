@@ -18217,6 +18217,159 @@ def create_app(
 
         return {"ok": True}
 
+    # ── TikTok task queue endpoints (extension dispatcher) ─────────
+    # Mirrors the Douyin block above by design: same two-phase staged
+    # completion contract, separate table (tiktok_tasks) and queue class.
+    # Scopes differ: TikTok adds tt_history (watch history → view), the
+    # first history-type bootstrap scope in this tree.
+
+    from openbiliclaw.sources.tiktok_tasks import (
+        TiktokTaskQueue,
+        tiktok_bootstrap_video_key,
+        tiktok_bootstrap_videos_to_events,
+    )
+
+    _tiktok_task_queue: TiktokTaskQueue | None = None
+    if hasattr(ctx.database, "conn"):
+        _tiktok_task_queue = TiktokTaskQueue(ctx.database)
+
+    @app.get("/api/sources/tiktok/next-task")
+    def tiktok_next_task(response: Any = None) -> Any:
+        """Return the oldest pending tiktok task, or 204 if none.
+
+        Unlike the dy route there is no native-save claim branch yet:
+        TikTok native save stays local-only until its own contract step
+        registers the slug (``is_native_save_local_only("tiktok")``).
+        """
+        from starlette.responses import Response
+
+        _cancel_disabled_source_incremental_tasks("tiktok")
+
+        if _tiktok_task_queue is None:
+            return Response(status_code=204)
+        task = _tiktok_task_queue.next_pending(only_ids=_init_owned_ids_filter())
+        if task is None:
+            return Response(status_code=204)
+
+        import json as _json
+
+        payload = _json.loads(task["payload_json"]) if task.get("payload_json") else {}
+        return {
+            "id": task["id"],
+            "type": task["type"],
+            **payload,
+        }
+
+    @app.post("/api/sources/tiktok/task-result")
+    async def tiktok_task_result(payload: dict[str, Any]) -> dict[str, Any]:
+        """Accept a TikTok task result from the extension dispatcher.
+
+        ``ok`` and ``degraded`` are terminal, while ``partial`` keeps the
+        task pending and ``failed`` marks it failed. ``degraded`` means the
+        extension preserved valid items but could not prove the bootstrap
+        was complete. The result schema uses ``videos`` and propagation
+        goes through ``tiktok_bootstrap_videos_to_events``.
+        """
+        task_id = str(payload.get("task_id", "") or "").strip()
+        if not task_id:
+            raise HTTPException(status_code=422, detail="task_id is required")
+        if _is_extension_native_job(task_id):
+            if not _is_extension_native_job(task_id, "tiktok"):
+                raise HTTPException(status_code=409, detail="task_result_conflict")
+            return _submit_extension_native_result("tiktok", payload)
+
+        status = str(payload.get("status", "") or "").strip()
+        videos = [v for v in payload.get("videos", []) if isinstance(v, dict)]
+        scope_counts = payload.get("scope_counts")
+        if not isinstance(scope_counts, dict):
+            scope_counts = None
+        debug = payload.get("debug")
+        if not isinstance(debug, dict):
+            debug = None
+
+        legacy_queue = _tiktok_task_queue
+        if legacy_queue is None:
+            raise HTTPException(status_code=409, detail="task_result_conflict")
+        task = _require_legacy_task(legacy_queue, task_id)
+        task_type = str(task.get("type", "")).strip() if task else ""
+        if str(task.get("status", "")).strip() in {"completed", "failed"}:
+            # Extension callbacks may race or be retried out of order.  Keep a
+            # terminal result immutable and acknowledge the retry so the
+            # dispatcher does not enter a resend loop.
+            return {"ok": True, "ignored": True}
+
+        from openbiliclaw.sources.task_result_protocol import (
+            parse_task_result,
+            staged_terminal_status,
+        )
+
+        canonical_result = parse_task_result(task.get("result_json"))
+        staged_status = staged_terminal_status(canonical_result)
+
+        if (
+            staged_status
+            or status in {"partial", "ok", "degraded"}
+            or (status == "empty" and task_type == "bootstrap_profile")
+        ):
+            is_final = (
+                bool(staged_status)
+                or status in {"ok", "degraded"}
+                or (status == "empty" and task_type == "bootstrap_profile")
+            )
+            if staged_status:
+                # Repair exclusively from the first durable final payload.
+                canonical_result = parse_task_result(task.get("result_json"))
+            elif is_final:
+                canonical_result = legacy_queue.stage_final_result(
+                    task_id,
+                    terminal_status=status,
+                    videos=videos if videos else None,
+                    scope_counts=scope_counts,
+                    debug=debug,
+                )
+            else:
+                legacy_queue.merge_result(
+                    task_id,
+                    videos=videos if videos else None,
+                    scope_counts=scope_counts,
+                    debug=debug,
+                    complete=False,
+                )
+                canonical_task = legacy_queue.get(task_id) or {}
+                canonical_result = parse_task_result(canonical_task.get("result_json"))
+            canonical_videos = [
+                value for value in canonical_result.get("videos", []) if isinstance(value, dict)
+            ]
+            # gui-init D1: persist the result (above) for init's own collector;
+            # during init skip profile propagation for non-owned results, but
+            # propagate init-OWNED bootstrap results through the deduped path.
+            _init_busy = _init_active_now()
+            _skip_profile = _init_busy and not _init_owns_task(task_id)
+            if task_type == "bootstrap_profile" and canonical_videos and not _skip_profile:
+                fresh_videos, video_keys_by_index = _filter_new_source_bootstrap_items(
+                    "tiktok",
+                    canonical_videos,
+                    tiktok_bootstrap_video_key,
+                )
+                events_with_keys: list[tuple[dict[str, Any], str]] = []
+                for index, video in enumerate(fresh_videos):
+                    for event in tiktok_bootstrap_videos_to_events([video]):
+                        key = video_keys_by_index.get(index, "")
+                        events_with_keys.append((event, key))
+                accepted_keys = await _accept_source_profile_events(
+                    source="tiktok",
+                    task_id=task_id,
+                    events_with_keys=events_with_keys,
+                    generic_owner=not _init_busy,
+                )
+                _mark_source_bootstrap_keys("tiktok", accepted_keys)
+            if is_final:
+                legacy_queue.complete_staged_result(task_id)
+        else:
+            legacy_queue.fail(task_id, error=payload.get("error", ""), debug=debug)
+
+        return {"ok": True}
+
     # ── Wake-up kick endpoints ──────────────────────────────────────
     #
     # The extension's task dispatchers normally poll on a 60s
@@ -18241,6 +18394,12 @@ def create_app(
         """Broadcast `dy_task_available` over runtime-stream. See
         xhs_task_kick docstring for rationale."""
         return await _kick_source_task("dy")
+
+    @app.post("/api/sources/tiktok/kick")
+    async def tiktok_task_kick() -> dict[str, Any]:
+        """Broadcast `tiktok_task_available` over runtime-stream. See
+        xhs_task_kick docstring for rationale."""
+        return await _kick_source_task("tiktok")
 
     @app.get("/api/sources/x/next-task")
     def x_next_task(response: Any = None) -> Any:
@@ -20426,6 +20585,7 @@ def create_app(
                 ),
                 tiktok=TiktokSourceConfigOut(
                     enabled=cfg.sources.tiktok.enabled,
+                    incremental_enabled=cfg.sources.tiktok.incremental_enabled,
                     mode=cfg.sources.tiktok.mode,
                     cookie=_mask(tt_cookie),
                     cookie_env=cfg.sources.tiktok.cookie_env,
@@ -20604,6 +20764,7 @@ def create_app(
                 reddit_incremental_hours=getattr(cfg.scheduler, "reddit_incremental_hours", None),
                 linuxdo_incremental_hours=getattr(cfg.scheduler, "linuxdo_incremental_hours", None),
                 v2ex_incremental_hours=getattr(cfg.scheduler, "v2ex_incremental_hours", None),
+                tiktok_incremental_hours=getattr(cfg.scheduler, "tiktok_incremental_hours", None),
                 refresh_check_interval_seconds=cfg.scheduler.refresh_check_interval_seconds,
                 eval_min_batch_size=cfg.scheduler.eval_min_batch_size,
                 eval_max_wait_seconds=cfg.scheduler.eval_max_wait_seconds,
@@ -22508,6 +22669,10 @@ def create_app(
                 if isinstance(tt_data, dict):
                     if "enabled" in tt_data:
                         cfg.sources.tiktok.enabled = _as_bool(tt_data["enabled"])
+                    if "incremental_enabled" in tt_data:
+                        cfg.sources.tiktok.incremental_enabled = _as_bool(
+                            tt_data["incremental_enabled"]
+                        )
                     if "mode" in tt_data:
                         # Reject invalid backends at save time instead of
                         # silently clamping them at read time.
@@ -23557,6 +23722,7 @@ def create_app(
                 "reddit_incremental_hours",
                 "linuxdo_incremental_hours",
                 "v2ex_incremental_hours",
+                "tiktok_incremental_hours",
                 "refresh_check_interval_seconds",
                 "eval_min_batch_size",
                 "eval_max_wait_seconds",
@@ -23613,6 +23779,7 @@ def create_app(
                         "reddit_incremental_hours",
                         "linuxdo_incremental_hours",
                         "v2ex_incremental_hours",
+                        "tiktok_incremental_hours",
                     }:
                         try:
                             # Douyin account bootstrap can foreground a task tab.

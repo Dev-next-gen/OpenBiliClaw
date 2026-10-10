@@ -135,6 +135,16 @@ _PLATFORMS = (
             "profile_update": False,
         },
     ),
+    (
+        "enqueue_tiktok_bootstrap",
+        "openbiliclaw.sources.tiktok_tasks.TiktokTaskQueue",
+        "bootstrap_profile",
+        {
+            "scopes": ["tt_like", "tt_collect", "tt_history", "tt_follow"],
+            "max_items_per_scope": 300,
+            "max_scroll_rounds": 15,
+        },
+    ),
 )
 
 
@@ -144,6 +154,52 @@ def test_weibo_bootstrap_registry_uses_durable_task_table() -> None:
 
     assert ("weibo", "weibo_tasks", "bootstrap_events") in source_bootstrap._BOOTSTRAP_TASK_TABLES
     assert "weibo_tasks" in _TASK_TABLES
+
+
+def test_tiktok_bootstrap_registry_uses_durable_task_table() -> None:
+    from openbiliclaw.sources import source_bootstrap
+    from openbiliclaw.sources.bootstrap_state import (
+        default_source_bootstrap_state,
+        normalize_source_bootstrap_state,
+        source_bootstrap_state_key,
+    )
+    from openbiliclaw.sources.task_result_protocol import _TASK_TABLES
+
+    assert ("tiktok", "tiktok_tasks", "bootstrap_profile") in (
+        source_bootstrap._BOOTSTRAP_TASK_TABLES
+    )
+    assert "tiktok_tasks" in _TASK_TABLES
+    assert source_bootstrap_state_key("tiktok") == "tiktok_seen_item_keys"
+    assert default_source_bootstrap_state()["tiktok_seen_item_keys"] == []
+    normalized = normalize_source_bootstrap_state(
+        {"tiktok_seen_item_keys": ["tt_like:123", "", "tt_like:123"]}
+    )
+    assert normalized["tiktok_seen_item_keys"] == ["tt_like:123"]
+
+
+def test_tiktok_degraded_recent_task_is_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.sources import source_bootstrap
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        "openbiliclaw.sources.tiktok_tasks.TiktokTaskQueue",
+        _queue_class(
+            recent={
+                "id": "degraded-task-id",
+                "status": "completed",
+                "result_json": json.dumps({"status": "degraded"}),
+            },
+            captured=captured,
+        ),
+    )
+
+    result = source_bootstrap.enqueue_tiktok_bootstrap(_FakeDatabase())
+
+    assert result.created is True
+    assert result.task_id == "fresh-task-id"
+    assert captured["task_type"] == "bootstrap_profile"
 
 
 def test_instagram_bootstrap_registry_enqueues_instagram_tasks_contract(
@@ -845,7 +901,7 @@ def _repo_root() -> str:
     return str(Path(__file__).resolve().parents[1])
 
 
-@pytest.mark.parametrize("source", ("xhs", "dy", "yt", "zhihu"))
+@pytest.mark.parametrize("source", ("xhs", "dy", "yt", "zhihu", "tiktok"))
 def test_guided_init_seeds_only_ok_for_ambiguous_empty_sources(source: str) -> None:
     from openbiliclaw.sources.source_bootstrap import seed_guided_init_attempts
 
@@ -918,7 +974,9 @@ def test_v2ex_guided_init_only_seeds_authoritative_completion(
     assert memory.update_calls == (1 if expected else 0)
 
 
-@pytest.mark.parametrize("source", ("xhs", "dy", "yt", "zhihu", "reddit", "linuxdo"))
+@pytest.mark.parametrize(
+    "source", ("xhs", "dy", "yt", "zhihu", "reddit", "linuxdo", "tiktok")
+)
 @pytest.mark.parametrize("status", ("degraded", "failed", "login_required", "timeout", "skipped"))
 def test_guided_init_does_not_seed_non_success_statuses(source: str, status: str) -> None:
     from openbiliclaw.sources.source_bootstrap import seed_guided_init_attempts

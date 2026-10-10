@@ -56,10 +56,23 @@ Web API 后端不伪造任何身份材料，身份生命周期如下：
 
 分发由 `TiktokRouterClient` 完成，它实现与 `TiktokClient` 相同的 async 接口，策略代码不感知后端差异。
 
+## 账号信号 bootstrap 与周期回拉（浏览器任务）
+
+除公开 discovery 外，TikTok 按 `docs/platform-source-contract.tiktok.toml`（`integration_level="full"`）接入账号行为信号：点赞（`tt_like`）、收藏（`tt_collect`）、观看历史（`tt_history`）、关注（`tt_follow`）四个 scope 全部由浏览器扩展在用户已登录的 tiktok.com 标签页内只读执行（`extension:browser-task:session-read-only`），后端绝不重放 TikTok 凭据。
+
+后端基建在 `sources/tiktok_tasks.py`，镜像抖音实现但完全独立：
+
+- `TiktokTaskQueue` 管理独立的 `tiktok_tasks` SQLite 表（pending → in_progress → completed/failed），`BEGIN IMMEDIATE` 内完成 stale-lease 重领、source-wide single-flight 与 claim；每日预算与 15 分钟 lease 语义与抖音一致。
+- scope→事件映射：点赞→`like`、收藏→`favorite`、观看历史→`view`、关注→`follow`；信号强度 collect=1.0 / like=0.85 / follow=0.6（同抖音），history=0.35（被动曝光，沿用 YouTube `yt_history` 先例）。
+- 任务结果走统一两阶段 staged completion（`task_result_protocol.py` 已注册 `tiktok_tasks`）：先在单事务冻结第一份 canonical payload + staged marker，再重放事件入口与 seen-key 投影，最后只翻 terminal status。
+- API 路由：`GET /api/sources/tiktok/next-task`（无任务 bodyless 204）、`POST /api/sources/tiktok/task-result`、`POST /api/sources/tiktok/kick`。
+- 周期增量已注册进 `runtime/source_incremental_sync.py` 五张表（`SOURCE_ORDER` / `_TASK_SPECS` / `_SOURCE_CONFIG_ALIASES` / `_SOURCE_CONFIG_NAMES` / `_SOURCE_INTERVAL_FIELDS`），由 `scheduler.source_incremental_enabled`（默认 `false`）与 `sources.tiktok.incremental_enabled`（默认 `false`）双重门控，周期字段为 `scheduler.tiktok_incremental_hours`（缺省继承全局）。
+- seen-key 去重投影写入 `source_bootstrap_state.json` 的 `tiktok_seen_item_keys`；guided init 成功（`ok`）会 seed 增量调度时钟，`empty` 与抖音一样视为证据不足不 seed。
+
 ## 合规说明
 
 - 只读公开元数据，使用 TikTok 自己签发的访客身份；**绝不伪造 msToken**（伪造比没有更糟，会被整体 gate）。
-- 不下载媒体、不抓登录态、不做账号画像导入。
+- 不下载媒体、不抓登录态；账号行为信号只在用户浏览器会话内只读观察，后端不接触 Cookie 值。
 - 频率由 producer 预算与节流控制：推荐流属高曝光面，`daily_feed_budget` 默认压到每日 3 次拉取；`min_interval_minutes` 控制两次执行最小间隔。
 - **登录态关键词搜索有账号风险**：`tiktok_search` 使用用户自己的登录 Cookie 调用搜索端点，这类登录态抓取违反 TikTok ToS，可能导致账号被限制。因此该策略默认不启用——只有配置了登录 Cookie 且 mode 允许 web 时才挂载，预算同样压低（`daily_search_budget` 默认 3）。
 
@@ -85,6 +98,7 @@ Web API 后端不伪造任何身份材料，身份生命周期如下：
 | 关键词规划器接入 | ✅ | `tiktok` 加入 `_PLANNER_PLATFORMS`；claim 的词优先喂 `tiktok_search`（原词不压缩，search 挂载时），未挂载时喂 `tiktok_tag`（压缩为 hashtag）；used/failed 生命周期跟随实际消费词的策略（P1.7），P1.8 keyword id 随候选传递 |
 | 头图 CDN 白名单 | ✅ | `tiktokcdn.com` / `tiktokcdn-us.com` / `tiktokcdn-eu.com` 进入 image_cache 头图白名单，走 `[network]` 海外路由（与 i.ytimg.com 同构，不进 CN 直连名单）；真实 For-You 封面经代理抓取 200 实测通过 |
 | `discover --source tiktok` CLI | ✅ | 手动触发正式 `TiktokDiscoveryProducer`（`enabled_override` 旁路 daemon 总开关，镜像 douyin 分支形态） |
+| 账号 bootstrap 任务队列 | ✅ | `TiktokTaskQueue` + `tiktok_tasks` 表（镜像抖音、完全独立）；`tt_like` / `tt_collect` / `tt_history` / `tt_follow` 四 scope，含仓库首个观看历史类 scope；两阶段 staged completion；`GET /api/sources/tiktok/next-task`、`POST /api/sources/tiktok/task-result`、`POST /api/sources/tiktok/kick` 三条路由；周期回拉注册进 `source_incremental_sync` 并由双重开关默认关闭 |
 | 桌面 / 插件设置页卡片 | ✅ | desktop 设置页与 popup 各有 TikTok 卡片：启用开关、后端 mode、可选 Cookie（扩展同步 / 手动粘贴）、region / tz_name、tags / creators、四分支预算、节流、占比、「测试连接」（通用 verify 分发）与发布日期偏好 |
 | guided init 排除 | ✅ | `guidedInit: false`：`_INIT_SOURCE_ORDER` 不含 tiktok，手工 POST `/api/init {"sources":["tiktok"]}` 归一化为空并按 `no_sources_selected` 拒绝（不会把来源置 enabled 却不采集信号） |
 | 配置面 | ✅ | `TiktokSourceConfig`（`mode` / `cookie_env` / `daily_feed_budget` 等）+ `config.example.toml` + `[scheduler.pool_source_shares] tiktok` + API config GET/PUT（非法 `mode` 保存时拒绝）+ credentials 只读行 |
@@ -108,6 +122,11 @@ from openbiliclaw.sources.tiktok_web import (
 )
 from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
 from openbiliclaw.sources.tiktok_web import probe_tiktok_login
+from openbiliclaw.sources.tiktok_tasks import (
+    TiktokTaskQueue,
+    tiktok_bootstrap_video_key,
+    tiktok_bootstrap_videos_to_events,
+)
 from openbiliclaw.discovery.strategies.tiktok import (
     TiktokFeedStrategy,
     TiktokTagStrategy,
@@ -143,6 +162,7 @@ result = await producer.produce_if_due(limit=20)
 | 配置 | 默认值 | 说明 |
 |------|------:|------|
 | `sources.tiktok.enabled` | `false` | 是否启用 TikTok steady-state discovery 和候选池配额；实验性，默认关闭 |
+| `sources.tiktok.incremental_enabled` | `false` | 扩展在线周期账号回拉的逐源开关；需同时开启 `scheduler.source_incremental_enabled` |
 | `sources.tiktok.mode` | `"auto"` | 后端选择：`auto`（web 优先 + yt-dlp 回退）/ `web` / `ytdlp`；非法值保存时拒绝 |
 | `sources.tiktok.cookie_env` | `"OPENBILICLAW_TIKTOK_COOKIE"` | 可选登录 Cookie 环境变量；兜底 `data/tiktok_cookie.json`；不配置时访客身份运行 |
 | `sources.tiktok.region` | `"JP"` | Web API 请求的地区参数，应匹配网络出口地区；被风控 gate 时首先检查 |
@@ -156,6 +176,7 @@ result = await producer.produce_if_due(limit=20)
 | `sources.tiktok.request_interval_seconds` | `2` | 实际请求最小间隔，包含 bootstrap 与重试；formal/inspiration 共享 SQLite 时隙 |
 | `sources.tiktok.min_interval_minutes` | `3` | producer 两次执行之间的最小间隔；`0` 表示每个 refresh tick 都可检查执行 |
 | `scheduler.pool_source_shares.tiktok` | `1` | TikTok 平台族候选池占比 |
+| `scheduler.tiktok_incremental_hours` | `null` | 周期回拉逐源覆盖；缺省继承全局 `source_incremental_hours`，`0` 只关闭 TikTok，范围 `0..168` |
 
 ## 设计决策
 

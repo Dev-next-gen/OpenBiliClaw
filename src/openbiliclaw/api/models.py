@@ -2390,6 +2390,7 @@ class YoutubeSourceConfigOut(SourceDatePreferenceOut):
 
 class TiktokSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
+    incremental_enabled: bool = False
     mode: str = "auto"
     # Resolved optional login Cookie header (env override, else
     # data/tiktok_cookie.json); masked on the way out. Guest identity is a
@@ -2592,6 +2593,7 @@ class SchedulerConfigOut(BaseModel):
     reddit_incremental_hours: int | None = None
     linuxdo_incremental_hours: int | None = None
     v2ex_incremental_hours: int | None = None
+    tiktok_incremental_hours: int | None = None
     refresh_check_interval_seconds: int = 60
     eval_min_batch_size: int = Field(default=15, ge=1, le=90)
     eval_max_wait_seconds: float = Field(default=90.0, ge=0.0, le=600.0)

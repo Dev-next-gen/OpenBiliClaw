@@ -18,7 +18,7 @@ entrypoints = [
   "src/openbiliclaw/sources/tiktok.py",
   "src/openbiliclaw/sources/tiktok_tasks.py",
   "extension/src/background/tiktok-task-dispatcher.ts",
-  "extension/src/content/tiktok/task-executor.ts",
+  "extension/src/content/tt/task-executor.ts",
   "extension/src/content/native-save/tiktok.ts",
 ]
 route_aliases = []
