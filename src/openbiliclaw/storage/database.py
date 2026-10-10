@@ -465,6 +465,7 @@ _EXTENSION_NATIVE_SAVE_PLATFORM_SLUGS = {
     "twitter": "x",
     "zhihu": "zhihu",
     "reddit": "reddit",
+    "tiktok": "tiktok",
 }
 _EXTENSION_NATIVE_SAVE_HOSTS = {
     "youtube": ("youtube.com", "youtu.be"),
@@ -473,6 +474,7 @@ _EXTENSION_NATIVE_SAVE_HOSTS = {
     "twitter": ("x.com", "twitter.com"),
     "zhihu": ("zhihu.com",),
     "reddit": ("reddit.com", "redd.it"),
+    "tiktok": ("tiktok.com",),
 }
 _EXTENSION_NATIVE_SAVE_IDENTITY_QUERY_FIELDS = {
     "youtube": frozenset({"v"}),

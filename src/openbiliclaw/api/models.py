@@ -1351,6 +1351,7 @@ ExtensionNativeSaveE2EPlatform = Literal[
     "twitter",
     "zhihu",
     "reddit",
+    "tiktok",
 ]
 _EXTENSION_NATIVE_SAVE_E2E_TARGETS: dict[str, dict[NativeSaveActionOut, str]] = {
     "youtube": {"favorite": "OpenBiliClaw", "watch_later": "YouTube Watch Later"},
@@ -1359,6 +1360,7 @@ _EXTENSION_NATIVE_SAVE_E2E_TARGETS: dict[str, dict[NativeSaveActionOut, str]] = 
     "twitter": {"favorite": "X Bookmarks", "watch_later": "X Bookmarks"},
     "zhihu": {"favorite": "知乎收藏", "watch_later": "知乎收藏"},
     "reddit": {"favorite": "Reddit Saved", "watch_later": "Reddit Saved"},
+    "tiktok": {"favorite": "TikTok Favorites", "watch_later": "TikTok Favorites"},
 }
 _EXTENSION_NATIVE_SAVE_E2E_CONTENT_IDS: dict[str, re.Pattern[str]] = {
     "youtube": re.compile(r"[A-Za-z0-9_-]{11}"),
@@ -1367,6 +1369,7 @@ _EXTENSION_NATIVE_SAVE_E2E_CONTENT_IDS: dict[str, re.Pattern[str]] = {
     "twitter": re.compile(r"[0-9]{5,30}"),
     "zhihu": re.compile(r"(?:question|answer|article):[0-9]+"),
     "reddit": re.compile(r"t[13]_[a-z0-9]+"),
+    "tiktok": re.compile(r"[0-9]{6,30}"),
 }
 _EXTENSION_NATIVE_SAVE_E2E_ERROR_CODES: dict[NativeSaveStatusOut, frozenset[str]] = {
     "pending": frozenset({""}),

@@ -777,6 +777,7 @@ _NATIVE_SAVE_E2E_CONTENT_TYPES: dict[str, frozenset[str]] = {
     "twitter": frozenset({"tweet", "status"}),
     "zhihu": frozenset({"question", "answer", "article"}),
     "reddit": frozenset({"post", "comment"}),
+    "tiktok": frozenset({"video"}),
 }
 
 
@@ -853,6 +854,11 @@ def _native_save_e2e_content_id_from_url(
         if not host_is_or_subdomain("douyin.com"):
             return ""
         match = re.fullmatch(r"/video/([A-Za-z0-9_-]+)/?", parsed.path)
+        return match.group(1) if match else ""
+    if platform == "tiktok":
+        if not host_is_or_subdomain("tiktok.com"):
+            return ""
+        match = re.fullmatch(r"/@[\w.-]+/video/([0-9]+)/?", parsed.path)
         return match.group(1) if match else ""
     if platform == "twitter":
         if not host_is_or_subdomain("x.com", "twitter.com"):
@@ -18253,11 +18259,14 @@ def create_app(
     def tiktok_next_task(response: Any = None) -> Any:
         """Return the oldest pending tiktok task, or 204 if none.
 
-        Unlike the dy route there is no native-save claim branch yet:
-        TikTok native save stays local-only until its own contract step
-        registers the slug (``is_native_save_local_only("tiktok")``).
+        Durable extension native-save jobs are claimed first (same
+        priority as dy/yt), then the tiktok_tasks bootstrap queue.
         """
         from starlette.responses import Response
+
+        native_task = _claim_extension_native_task("tiktok")
+        if native_task is not None:
+            return native_task
 
         _cancel_disabled_source_incremental_tasks("tiktok")
 
