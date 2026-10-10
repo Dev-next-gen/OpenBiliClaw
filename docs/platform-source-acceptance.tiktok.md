@@ -2,6 +2,24 @@
 
 本轮续验日期：2026-10-10。登录态搜索、安装版 Chrome 扩展 Cookie 自动同步和真实模型管线已通过；当前详细结果见文末续验。历史段落保留其当时的证据边界，不代表当前仍缺 Cookie。discovery-only 范围的真实功能验收已补齐；本机全量与修复后回归结果见文末，当前分支 CI 以 [PR #275 checks](https://github.com/whiteguo233/OpenBiliClaw/pull/275/checks) 为准。
 
+## Full 升级验收 ledger（2026-10-11 起，进行中）
+
+本轮把 integration level 从 `discovery-only` 升级为 `full`：账号行为采集（点赞/收藏/观看历史 bootstrap + 周期增量）、guided init 画像初始化、站内收藏 native save。分支 `feat/tiktok-full-source`（worktree `.worktrees/tiktok-full`，基于 `feat/tiktok-source` 头 `a9d9b0bc`），stacked 于 PR #275 之上。
+
+契约门基线：契约更新为 `full` 后 audit `required_missing=11`（transport.implementation、source-auth.capability-readiness、profile.signals、profile.incremental、profile.bootstrap-registries、extension.task、extension.task-marker、extension.background、surface.setup、engagement.danmaku 排除测试改名、media.native-save），对应下表 NOT_RUN 项；全部 required 行 PASS 前总体 verdict 为 **incomplete**。
+
+| Gate | Applicability | Status | Evidence / remaining risk |
+| --- | --- | --- | --- |
+| Contract gate（冻结 full 契约） | required | PASS | 契约已更新为 full；audit 基线 11 MISSING，见上 |
+| 后端任务基建（tiktok_tasks 队列表 + 五处注册 + next-task/task-result 路由） | required | NOT_RUN | |
+| 插件采集端（tiktok-task-dispatcher + content/tiktok + manifest 注册，两阶段 staged completion） | required | NOT_RUN | |
+| 画像初始化（guided init 接入，init 真实信号） | required | NOT_RUN | |
+| 周期增量（source_incremental_sync，默认关不变） | required | NOT_RUN | |
+| 站内收藏（ExtensionNativeSaveBroker + native-save/tiktok.ts，auto_sync 默认关，精确授权 E2E） | required | NOT_RUN | |
+| 契约测试反转（test_tiktok_contract.py 排除断言改写为正向） | required | NOT_RUN | |
+| 真实验收（登录态 bootstrap/增量/native-save 受控 E2E） | required | NOT_RUN | |
+| 文档/交付（模块文档、CHANGELOG、架构图、PR） | required | NOT_RUN | |
+
 ## 范围与 provenance
 
 - Integration level：`discovery-only`；账号历史、画像初始化、增量行为采集、站内收藏均明确排除，见 [contract](platform-source-contract.tiktok.toml) 和 `tests/test_tiktok_contract.py`。
