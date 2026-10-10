@@ -56,6 +56,10 @@ const entrypoints = [
     outfile: resolve(root, `${outDir}/content/douyin.js`),
   },
   {
+    entry: resolve(root, "src/content/tiktok.ts"),
+    outfile: resolve(root, `${outDir}/content/tiktok.js`),
+  },
+  {
     entry: resolve(root, "src/main/xhs-token-sniffer.ts"),
     outfile: resolve(root, `${outDir}/main/xhs-token-sniffer.js`),
   },

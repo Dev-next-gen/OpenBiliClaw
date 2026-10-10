@@ -48,6 +48,14 @@ import {
   type DyTaskResult,
 } from "./dy-task-dispatcher.js";
 import {
+  startTiktokTaskPolling,
+  handleTiktokTaskAlarm,
+  handleTiktokScopeResult,
+  ensureTiktokTaskRecovery,
+  pollTiktokTaskNow,
+} from "./tiktok-task-dispatcher.ts";
+import type { TiktokScopeResult } from "../content/tt/task-executor.ts";
+import {
   startYtTaskPolling,
   handleYtTaskAlarm,
   handleYtScopeResult,
@@ -309,6 +317,10 @@ async function handleRuntimeEvent(event: Record<string, unknown>): Promise<void>
   }
   if (eventType === "dy_task_available") {
     pollDyTaskNow();
+    return;
+  }
+  if (eventType === "tiktok_task_available") {
+    pollTiktokTaskNow();
     return;
   }
   if (eventType === "yt_task_available") {
@@ -625,6 +637,7 @@ function startPlatformTaskPolling(): void {
   startInstagramTaskPolling();
   startXTaskPolling();
   startBiliTaskPolling();
+  startTiktokTaskPolling();
 }
 
 async function startServiceWorkerAfterRecovery(): Promise<void> {
@@ -640,6 +653,7 @@ async function startServiceWorkerAfterRecovery(): Promise<void> {
   await ensureV2EXTaskRecovery();
   await ensureInstagramTaskRecovery();
   await ensureDyTaskRecovery();
+  await ensureTiktokTaskRecovery();
   await runtimeStreamReady;
   startPlatformTaskPolling();
   startCookieSync();
@@ -785,6 +799,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true;
   }
+  if (message.action === "TIKTOK_SCOPE_RESULT") {
+    void handleTiktokScopeResult(message.data as TiktokScopeResult)
+      .then(() => {
+        sendResponse({ ok: true });
+      })
+      .catch((error: unknown) => {
+        sendResponse({ ok: false, error: String(error) });
+      });
+    return true;
+  }
   if (message.action === "YT_SCOPE_RESULT") {
     void handleYtScopeResult(message.data as YtScopeResult)
       .then(() => {
@@ -897,6 +921,7 @@ if (typeof chrome !== "undefined" && chrome.alarms?.onAlarm) {
   chrome.alarms.onAlarm.addListener((alarm) => {
     handleXhsTaskAlarm(alarm.name);
     handleDyTaskAlarm(alarm.name);
+    handleTiktokTaskAlarm(alarm.name);
     handleYtTaskAlarm(alarm.name);
     handleZhihuTaskAlarm(alarm.name);
     handleWeiboTaskAlarm(alarm.name);

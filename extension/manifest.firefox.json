@@ -121,6 +121,15 @@
         },
         {
             "matches": [
+                "*://*.tiktok.com/*"
+            ],
+            "js": [
+                "content/tiktok.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
                 "*://*.youtube.com/*"
             ],
             "js": [
