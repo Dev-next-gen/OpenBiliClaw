@@ -73,9 +73,9 @@
     douyin: Object.freeze({ guidedInit: true }),
     weibo: Object.freeze({ guidedInit: true }),
     youtube: Object.freeze({ guidedInit: true }),
-    // TikTok is a yt-dlp public source with no account bootstrap, so it has
-    // no guided-init checkbox; it is toggled from config / settings only.
-    tiktok: Object.freeze({ guidedInit: false }),
+    // TikTok account bootstrap (likes/favorites/history/follows) runs through
+    // the extension tiktok_tasks queue, so it participates in guided init.
+    tiktok: Object.freeze({ guidedInit: true }),
     twitter: Object.freeze({ guidedInit: true }),
     github: Object.freeze({ guidedInit: true }),
     zhihu: Object.freeze({ guidedInit: true }),

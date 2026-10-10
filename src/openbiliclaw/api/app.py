@@ -719,15 +719,17 @@ _SOURCE_SHARE_ORDER = (
 # Unknown/unregistered platform slugs are preserved in the database for future
 # expansion, but they must not silently disappear from source-share counts.
 _SOURCE_COUNT_ORDER = _SOURCE_SHARE_ORDER + ("unknown",)
-# Guided-init legal sources: every source family EXCEPT tiktok, whose
-# discovery is creator/tag driven rather than profile-signal driven
-# (guidedInit: false in web/shared/source-status.js). Letting tiktok in here
-# would flip ``sources.tiktok.enabled`` on while collecting no init signals.
+# Guided-init legal sources: every registered source family. TikTok joined
+# when its account bootstrap queue (tiktok_tasks) landed — guided init now
+# collects real signals (tt_like/tt_collect/tt_history/tt_follow) through the
+# extension task handler, so enabling it no longer flips
+# ``sources.tiktok.enabled`` without collecting anything.
 _INIT_SOURCE_ORDER = (
     "bilibili",
     "xiaohongshu",
     "douyin",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",
@@ -6184,6 +6186,7 @@ def create_app(
                 include_xhs="xiaohongshu" in effective,
                 include_dy="douyin" in effective,
                 include_yt="youtube" in effective,
+                include_tiktok="tiktok" in effective,
                 include_x="twitter" in effective,
                 include_zhihu="zhihu" in effective,
                 include_reddit="reddit" in effective,
@@ -6214,6 +6217,8 @@ def create_app(
             discovery_partial = bool(result.discovery_error)
             dy_status = str(getattr(result, "dy_status", "skipped") or "skipped")
             dy_degraded = dy_status == "degraded"
+            tiktok_status = str(getattr(result, "tiktok_status", "skipped") or "skipped")
+            tiktok_degraded = tiktok_status == "degraded"
             linuxdo_status = str(getattr(result, "linuxdo_status", "skipped") or "skipped")
             linuxdo_degraded = linuxdo_status == "degraded"
             weibo_status = str(getattr(result, "weibo_status", "skipped") or "skipped")
@@ -6234,6 +6239,7 @@ def create_app(
             partial_success = (
                 discovery_partial
                 or dy_degraded
+                or tiktok_degraded
                 or linuxdo_degraded
                 or v2ex_partial
                 or github_partial
@@ -6242,6 +6248,16 @@ def create_app(
             )
             reason = getattr(result, "discovery_reason", None)
             detail = str(getattr(result, "discovery_detail", "") or "").strip()
+            if tiktok_degraded:
+                tiktok_event_count = len(getattr(result, "tiktok_events", []) or [])
+                tiktok_detail = (
+                    "TikTok 采集状态 tiktok_status=degraded："
+                    f"已保留并用于画像建模 {tiktok_event_count} 条已采事件，"
+                    "但至少一个范围未能证明分页完整。"
+                )
+                detail = " ".join(part for part in (detail, tiktok_detail) if part)
+                if not discovery_partial:
+                    reason = "tiktok_degraded"
             if dy_degraded:
                 dy_event_count = len(getattr(result, "dy_events", []) or [])
                 dy_detail = (

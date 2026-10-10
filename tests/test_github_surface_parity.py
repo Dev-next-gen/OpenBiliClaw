@@ -96,11 +96,11 @@ def test_canonical_source_roster_matches_every_central_registration_set() -> Non
     for name, roster in rosters.items():
         _assert_same_roster(name, roster, canonical)
 
-    # Guided init covers every source family except tiktok (guidedInit: false —
-    # its discovery is creator/tag driven and collects no profile signals).
+    # Guided init covers every source family, tiktok included (its account
+    # bootstrap scopes feed profile signals since the full-source upgrade).
     init_roster = tuple(_literal_assignment(app_path, "_INIT_SOURCE_ORDER"))
-    assert set(init_roster) == canonical - {"tiktok"}
-    assert "tiktok" not in init_roster
+    assert set(init_roster) == canonical
+    assert "tiktok" in init_roster
 
     assert tuple(SOURCE_ORDER) == canonical_tuple
     assert tuple(_literal_assignment(app_path, "_SOURCE_SHARE_ORDER")) == canonical_tuple

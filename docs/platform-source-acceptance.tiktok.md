@@ -11,10 +11,10 @@
 | Gate | Applicability | Status | Evidence / remaining risk |
 | --- | --- | --- | --- |
 | Contract gate（冻结 full 契约） | required | PASS | 契约已更新为 full；audit 基线 11 MISSING，见上 |
-| 后端任务基建（tiktok_tasks 队列表 + 五处注册 + next-task/task-result 路由） | required | NOT_RUN | |
+| 后端任务基建（tiktok_tasks 队列表 + 五处注册 + next-task/task-result 路由） | required | PASS | 提交 4644dded；`TiktokTaskQueue` + `tiktok_tasks` 表、`_TASK_TABLES` / `_BOOTSTRAP_TASK_TABLES` / `bootstrap_state` / `source_incremental_sync` 五处注册、`GET next-task`（204）/ `POST task-result`（两阶段 staged completion）/ `POST kick`；23 项队列与路由测试 |
 | 插件采集端（tiktok-task-dispatcher + content/tiktok + manifest 注册，两阶段 staged completion） | required | NOT_RUN | |
-| 画像初始化（guided init 接入，init 真实信号） | required | NOT_RUN | |
-| 周期增量（source_incremental_sync，默认关不变） | required | NOT_RUN | |
+| 画像初始化（guided init 接入，init 真实信号） | required | PASS | `_INIT_SOURCE_ORDER` / `_PLATFORM_SOURCE_FIELDS` 放行，`guidedInit: true`，CLI `--yes-tiktok` / `--no-tiktok`，`_enqueue_tiktok_bootstrap_task` / `_collect_tiktok_bootstrap_events` 接入 init 第 1 阶段，事件经 `_tiktok_events_to_history_items` 进画像；`tests/test_tiktok_guided_init.py` 15 项；audit `profile.signals`、`surface.setup` 转 PASS（真实登录态采集证据仍属「真实验收」行） |
+| 周期增量（source_incremental_sync，默认关不变） | required | PASS | 提交 4644dded；`SOURCE_ORDER` / `_TASK_SPECS` / `_SOURCE_CONFIG_ALIASES` / `_SOURCE_CONFIG_NAMES` / `_SOURCE_INTERVAL_FIELDS` 注册，`source_incremental_enabled` 与 `sources.tiktok.incremental_enabled` 双默认关不变；`seed_guided_init_attempts` 把 tiktok 归入 ok-only 组 |
 | 站内收藏（ExtensionNativeSaveBroker + native-save/tiktok.ts，auto_sync 默认关，精确授权 E2E） | required | NOT_RUN | |
 | 契约测试反转（test_tiktok_contract.py 排除断言改写为正向） | required | NOT_RUN | |
 | 真实验收（登录态 bootstrap/增量/native-save 受控 E2E） | required | NOT_RUN | |

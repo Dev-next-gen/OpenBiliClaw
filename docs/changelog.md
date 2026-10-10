@@ -4,6 +4,13 @@
 
 ## 未发布：TikTok 源后端缺口修复与前端展示面补全（issue #88）
 
+### 新增：TikTok 接入 guided init 画像初始化（2026-10-11）
+
+- 解除排除：`_INIT_SOURCE_ORDER` 与 `init_prereqs._PLATFORM_SOURCE_FIELDS` 放行 tiktok，`web/shared/source-status.js` 的 `guidedInit` 翻为 `true`；setup / 桌面 / popup 的初始化来源清单由共享 roster 自动派生，setup 页补充 `tiktok_degraded` 文案。
+- CLI：`init` 新增 `--yes-tiktok` / `--no-tiktok`（`OPENBILICLAW_NO_TIKTOK=1` 优先于 `--yes-tiktok`），交互模式默认 N 并展示扩展 / 登录 / 焦点抢占准备清单；新增 `_enqueue_tiktok_bootstrap_task` / `_collect_tiktok_bootstrap_events`（默认等待 180 秒，`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS` 可调），init 第 1 阶段在 Instagram 之后串行采集点赞 / 收藏 / 观看历史 / 关注。
+- 画像链：事件经 `_tiktok_events_to_history_items` 进入画像构建（`source_platform=tiktok`），`InitResult` 增加 `tiktok_events` / `tiktok_scope_counts` / `tiktok_status`；`degraded` 按部分完成上报（CLI 面板与 API `tiktok_degraded` reason）；`ok` 终态 seed 增量调度时钟。
+- 测试：`tests/test_tiktok_guided_init.py` 覆盖准入、CLI 选项、collect 全状态分支与 init 全流程事件进画像；weibo / instagram / github 的 roster-parity 测试更新为「init 名单覆盖全部 share 来源」。
+
 ### 新增：TikTok 升级为 full 来源——后端浏览器任务基建（2026-10-11）
 
 - 新增 `sources/tiktok_tasks.py`：`TiktokTaskQueue`（独立 `tiktok_tasks` 表，镜像抖音的 single-flight claim / 15 分钟 stale lease / 每日预算）与 bootstrap 事件转换；scope 为 `tt_like` / `tt_collect` / `tt_history` / `tt_follow`（仓库首个观看历史类 scope），事件映射 like→like、collect→favorite、history→view、follow→follow，信号强度 0.85 / 1.0 / 0.35 / 0.6。

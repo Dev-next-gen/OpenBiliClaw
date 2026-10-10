@@ -60,6 +60,7 @@ _PLATFORM_SOURCE_FIELDS = (
     "xiaohongshu",
     "douyin",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",

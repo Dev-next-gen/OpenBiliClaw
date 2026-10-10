@@ -69,6 +69,16 @@ Web API 后端不伪造任何身份材料，身份生命周期如下：
 - 周期增量已注册进 `runtime/source_incremental_sync.py` 五张表（`SOURCE_ORDER` / `_TASK_SPECS` / `_SOURCE_CONFIG_ALIASES` / `_SOURCE_CONFIG_NAMES` / `_SOURCE_INTERVAL_FIELDS`），由 `scheduler.source_incremental_enabled`（默认 `false`）与 `sources.tiktok.incremental_enabled`（默认 `false`）双重门控，周期字段为 `scheduler.tiktok_incremental_hours`（缺省继承全局）。
 - seen-key 去重投影写入 `source_bootstrap_state.json` 的 `tiktok_seen_item_keys`；guided init 成功（`ok`）会 seed 增量调度时钟，`empty` 与抖音一样视为证据不足不 seed。
 
+## Guided init 接入
+
+TikTok 是 guided init 的正式来源（`guidedInit: true`）：
+
+- **准入**：`_INIT_SOURCE_ORDER` 与 `init_prereqs._PLATFORM_SOURCE_FIELDS` 均含 `tiktok`；`POST /api/init` 的显式 `sources` 选择可只选 tiktok（不再归一化为空）。前端 setup / 桌面 / popup 的初始化来源清单由 `web/shared/source-status.js` 的 `SOURCE_CAPABILITIES` 派生，无需逐页注册。
+- **CLI**：`openbiliclaw init --yes-tiktok` 跳过提问直接启用，`--no-tiktok` 跳过；`OPENBILICLAW_NO_TIKTOK=1` 优先级最高（覆盖 `--yes-tiktok`）。非交互终端默认不启用。交互模式会展示扩展安装 / 登录 tiktok.com / 前台 tab 焦点抢占的准备清单。
+- **采集链**：init 第 1 阶段在 Instagram 之后串行调用 `_enqueue_tiktok_bootstrap_task`（`enqueue_tiktok_bootstrap` + kick）与 `_collect_tiktok_bootstrap_events`（轮询 `tiktok_tasks` 行直到 terminal，默认等待 180 秒，`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS` 可调）；终态标签为 `ok / degraded / empty / timeout / failed / skipped`，`degraded` 保留已采事件并按部分完成上报。
+- **画像链**：任务结果由 task-result 路由负责持久化与事件入口重放（init-owned 任务的画像传播不被 init 围栏跳过）；本 run 的偏好分析与画像构建直接使用收集到的事件，经 `_tiktok_events_to_history_items` 转成画像构建行（`source_platform=tiktok`）。
+- **调度种子**：`ok` 终态 seed `last_attempt_at` / `last_success_at`（`seed_guided_init_attempts` 的 ok-only 组），`empty` / `degraded` / `failed` 不推进增量时钟。
+
 ## 合规说明
 
 - 只读公开元数据，使用 TikTok 自己签发的访客身份；**绝不伪造 msToken**（伪造比没有更糟，会被整体 gate）。
@@ -100,7 +110,7 @@ Web API 后端不伪造任何身份材料，身份生命周期如下：
 | `discover --source tiktok` CLI | ✅ | 手动触发正式 `TiktokDiscoveryProducer`（`enabled_override` 旁路 daemon 总开关，镜像 douyin 分支形态） |
 | 账号 bootstrap 任务队列 | ✅ | `TiktokTaskQueue` + `tiktok_tasks` 表（镜像抖音、完全独立）；`tt_like` / `tt_collect` / `tt_history` / `tt_follow` 四 scope，含仓库首个观看历史类 scope；两阶段 staged completion；`GET /api/sources/tiktok/next-task`、`POST /api/sources/tiktok/task-result`、`POST /api/sources/tiktok/kick` 三条路由；周期回拉注册进 `source_incremental_sync` 并由双重开关默认关闭 |
 | 桌面 / 插件设置页卡片 | ✅ | desktop 设置页与 popup 各有 TikTok 卡片：启用开关、后端 mode、可选 Cookie（扩展同步 / 手动粘贴）、region / tz_name、tags / creators、四分支预算、节流、占比、「测试连接」（通用 verify 分发）与发布日期偏好 |
-| guided init 排除 | ✅ | `guidedInit: false`：`_INIT_SOURCE_ORDER` 不含 tiktok，手工 POST `/api/init {"sources":["tiktok"]}` 归一化为空并按 `no_sources_selected` 拒绝（不会把来源置 enabled 却不采集信号） |
+| guided init 接入 | ✅ | `guidedInit: true`：`_INIT_SOURCE_ORDER` 含 tiktok，init 第 1 阶段串行入队并收集 `bootstrap_profile` 任务（点赞 / 收藏 / 观看历史 / 关注），事件经 `tiktok_bootstrap_videos_to_events` 进入偏好分析与画像构建；CLI 有 `--yes-tiktok` / `--no-tiktok`（`OPENBILICLAW_NO_TIKTOK=1` 优先），setup / 桌面 / popup 的来源清单由共享 roster 派生 |
 | 配置面 | ✅ | `TiktokSourceConfig`（`mode` / `cookie_env` / `daily_feed_budget` 等）+ `config.example.toml` + `[scheduler.pool_source_shares] tiktok` + API config GET/PUT（非法 `mode` 保存时拒绝）+ credentials 只读行 |
 | 依赖 | ✅ | `curl-cffi>=0.15` 进入默认依赖（Chrome TLS 指纹；与 yt-dlp 可选依赖同包，版本天然兼容） |
 
