@@ -21,13 +21,15 @@ class ElementFixture {
   dispatchEvent() { this.clicks++; if ("aria-selected" in this.attrs) this.attrs["aria-selected"] = "true"; return true; }
 }
 
-function environment(options: { route?: string; scopeRoot?: boolean; scrollFails?: boolean; storageFails?: boolean; switchViewer?: boolean; switchSecUid?: boolean } = {}) {
+function environment(options: { route?: string; scopeRoot?: boolean; scrollFails?: boolean; storageFails?: boolean; switchViewer?: boolean; switchSecUid?: boolean; readyAfterTicks?: number; profileTitleAfterTicks?: number; displayNameTitle?: boolean; panelAfterTicks?: number } = {}) {
+  let ticks = 0;
   const saved: Record<string, PropertyDescriptor | undefined> = {};
   const values: Record<string, unknown> = {};
   const session = new Map<string, string>();
   const results: TiktokScopeResult[] = [];
   const nav = new ElementFixture({ href: "/@me.user" });
-  const title = new ElementFixture(); title.textContent = "me.user";
+  const title = new ElementFixture(); title.textContent = options.displayNameTitle ? "My display name" : "me.user";
+  const subtitle = new ElementFixture(); subtitle.textContent = "@me.user";
   const tab = new ElementFixture({ "aria-selected": "false", "aria-controls": "liked-panel" });
   const video = new ElementFixture({ href: "/@creator/video/7300000000000000001", title: "Cats" });
   const panel = new ElementFixture({ role: "tabpanel" });
@@ -38,12 +40,15 @@ function environment(options: { route?: string; scopeRoot?: boolean; scrollFails
   const doc = {
     body: { textContent: "" },
     getElementById(id: string) {
+      if (ticks < (options.readyAfterTicks ?? 0)) return null;
       if (id === "__UNIVERSAL_DATA_FOR_REHYDRATION__") return { textContent: JSON.stringify(identity) };
-      return options.scopeRoot === false ? null : panel;
+      return options.scopeRoot === false || ticks < (options.panelAfterTicks ?? 0) ? null : panel;
     },
     querySelector(selector: string) {
+      if (ticks < (options.readyAfterTicks ?? 0)) return null;
       if (selector.includes('data-e2e="nav-profile"')) return nav;
-      if (selector === '[data-e2e="user-title"]') return title;
+      if (selector === '[data-e2e="user-title"]') return ticks < (options.profileTitleAfterTicks ?? 0) ? null : title;
+      if (selector === '[data-e2e="user-subtitle"]') return options.displayNameTitle ? subtitle : null;
       if (selector === '[data-e2e="liked-tab"]') return tab;
       return null;
     },
@@ -74,13 +79,13 @@ function environment(options: { route?: string; scopeRoot?: boolean; scrollFails
       } },
       runtime: { onMessage: { addListener() {} }, sendMessage: async (message: { data: TiktokScopeResult }) => { results.push(message.data); } },
     },
-    setTimeout: ((callback: (...args: unknown[]) => void) => originalTimer(callback, 0)),
+    setTimeout: ((callback: (...args: unknown[]) => void) => originalTimer(() => { ticks++; callback(); }, 0)),
   };
   for (const [key, value] of Object.entries(globals)) {
     saved[key] = Object.getOwnPropertyDescriptor(globalThis, key);
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   }
-  return { values, session, results, tab, restore() {
+  return { values, session, results, tab, nav, restore() {
     for (const [key, descriptor] of Object.entries(saved)) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
       else Reflect.deleteProperty(globalThis, key);
@@ -194,4 +199,17 @@ test("stable handle cannot conceal a changed session secUid", async () => {
     assert.equal(env.results[0]?.items.length, 1);
     assert.match(env.results[0]?.error ?? "", /account_session_changed/);
   } finally { env.restore(); }
+});
+
+
+test("completed documents wait for hydrated viewer and own-profile heading", async () => {
+  for (const options of [{ readyAfterTicks: 2 }, { profileTitleAfterTicks: 3 }, { displayNameTitle: true }, { panelAfterTicks: 5 }]) {
+    const env = environment(options);
+    try {
+      await executeTiktokScopeOnce(message("hydration-" + JSON.stringify(options)));
+      assert.equal(env.results[0]?.items.length, 1);
+      assert.equal(env.results[0]?.viewer_handle, "me.user");
+      assert.equal(env.nav.clicks, 0, "an owned profile awaiting hydration must not reload itself");
+    } finally { env.restore(); }
+  }
 });

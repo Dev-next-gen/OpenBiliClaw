@@ -637,6 +637,8 @@ TikTok 封面：`图片代理 → DoH 公网地址校验 → 固定 IP / 保留 
 
 TikTok：`正式发现 / 灵感探索 → 共用请求间隔与持久限流状态 → 签名 Web API → 候选池`；仅 auto 模式允许 yt-dlp 回退。
 
+TikTok 登录态同步：`扩展 Cookie → 验证并保存 → 有效凭据变化时安全重建运行时 → 挂载关键词搜索`；重复同步不重启任务。
+
 TikTok 账号链路：`手动初始化 / 显式开启的周期增量 → bootstrap_profile（四 scope 与冻结预算）→ 插件本人列表 → 账号绑定 / staged result → 幂等事件 → 画像`；站内保存单独经 `local membership → durable native-save job → 精确视频收藏确认`。新增账号能力的真实安装版验收仍待完成，见 [验收台账](docs/platform-source-acceptance.tiktok.md)。
 
 本地向量：`正式请求 / 诊断 → Ollama 自动加速 → 有效向量；runner 故障 → CPU 重试 → 验证结果`。CPU 选择在本次后端运行期间共享，重启后重新尝试自动加速。

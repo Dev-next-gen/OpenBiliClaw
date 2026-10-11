@@ -255,3 +255,20 @@ PYTHONPATH=src python scripts/smoke_tiktok_pipeline.py --config /path/to/config.
 - scope 回报使用 durable FIFO；120 秒 idle 与最多 360 秒 absolute deadline 分别持久化，恢复/心跳不延长 idle；超时/后续 scope 失败保留既有 rows。task-tab sender 校验与整页导航恢复阻止串任务，默认周期同步仍关闭，任务标签保持后台。
 - 收藏执行在等待与确认时重读当前视频 URL；SPA 切换不允许点击另一视频，也不把其选中态当成功。授权仍为单条 exact platform/action/content_id/target。
 - 真实 Chrome 控制当前返回 `nodeRepl.fetch request failed`，没有可读标签页；本批四项账号能力的 live E2E 尚未完成。此前 #275 的搜索/Cookie E2E 仅证明发现链路，不替代本批验收。
+
+
+### 扩展迟到的 Cookie 同步
+
+后端先以访客模式启动、再收到扩展 Cookie 时，统一凭据入口在验证保存后安全重建运行时，替换捕获旧 Cookie 的 TikTok 客户端并挂载搜索。仅有效凭据变化触发重建；env 优先语义不变，相同 Cookie 重投不重启任务。2026-10-11 正常后端真实运行复现并修复该缺口，详见验收台账。
+
+账号采集登录墙的文字兜底只读取 DOM `innerText`，不读取包含 SSR JSON、翻译表和隐藏模板的 `textContent`；没有可见登录墙也不代表已登录，仍需正向会话/本人身份依据。真实安装版诊断与隐藏文案回归见验收台账。
+
+页面文档 complete 后仍等待最多 40 次、每次 250ms 的登录身份渲染；点击本人资料入口后同样有界等待 URL 与账号标题吻合，替代固定 2.5 秒延迟。未就绪仍失败，沿用任务总超时和账号边界。
+
+已在本人 URL 时不再次点击资料入口，防止标题尚未渲染时整页导航反复恢复同一 scope；等待也检查墙钟上限，避免后台标签页定时器节流无限拉长轮数预算。
+
+当前 TikTok 资料页可将昵称放在 `user-title`、账号名放在 `user-subtitle`。本人页面必须同时满足当前 URL 属于已观察 viewer，且可见主/副标题之一与该账号名精确匹配；不能把显示昵称当作账号键。
+
+账号 scope 基础预算为 60 秒（包括登录 hydration、本人的资料页导航及恢复），再按滚动轮数追加；整任务上限仍为 360 秒、idle 为 120 秒，CLI 等待仍为 480 秒。
+
+点击范围标签后同样有界等待已确认的 scope root 再采集；静态延迟不能代替列表渲染证明。

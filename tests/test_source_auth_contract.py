@@ -4239,3 +4239,41 @@ def test_a_failing_deferred_credential_write_names_what_landed(contract_env: _En
     assert "twitter" in message, message
     assert "douyin" in message, "the error must say which credentials did land"
     assert "disk full" in message, "the real cause has to survive"
+
+
+def test_tiktok_cookie_sync_refreshes_runtime_only_on_effective_change(contract_env: _Env) -> None:
+    """Late extension login must replace the guest client without restart loops."""
+    from unittest.mock import AsyncMock
+
+    _stub_live_probe(contract_env)
+    contract_env.cfg.sources.tiktok.enabled = True
+    with _write_client(contract_env) as client:
+        runtime = client.app.state.runtime_context
+        rebuild = AsyncMock()
+        contract_env.monkeypatch.setattr(runtime, "rebuild_from_config", rebuild)
+        for cookie, expected in [
+            ("sessionid=first", 1),
+            ("sessionid=first", 1),
+            ("sessionid=second", 2),
+        ]:
+            response = client.post("/api/sources/tiktok/credential", json={"value": cookie})
+            assert response.status_code == 200
+            assert response.json()["accepted"] is True
+            assert rebuild.await_count == expected
+
+
+def test_tiktok_cookie_sync_respects_environment_precedence(contract_env: _Env) -> None:
+    """A lower-priority file update must not restart an unchanged live client."""
+    from openbiliclaw.api.source_auth.write import persist_credential
+
+    contract_env.monkeypatch.setenv(contract_env.cfg.sources.tiktok.cookie_env, "sessionid=env")
+    result = persist_credential(
+        "tiktok",
+        "cookie",
+        "sessionid=file",
+        cfg=contract_env.cfg,
+        database=contract_env.db,
+        source="test",
+    )
+    assert result.persisted
+    assert not result.runtime_dirty

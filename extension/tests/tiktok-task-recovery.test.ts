@@ -491,7 +491,7 @@ test("idle deadline advances only on accepted scope progress and survives worker
     await settleSessionWrites();
     const first = state.sessionStorage[TIKTOK_TASK_STATE_SESSION_KEY] as PersistedTiktokTaskState;
     const absolute = first.deadline_ms;
-    assert.equal(absolute, now + 300_000);
+    assert.equal(absolute, now + 360_000);
     assert.equal(first.idle_deadline_ms, now + 120_000);
     assert.equal(alarms.created.filter((a) => a.name === TASK_TIMEOUT_ALARM_NAME).at(-1)?.when, first.idle_deadline_ms);
     now += 50_000;

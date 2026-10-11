@@ -98,7 +98,9 @@ export function detectTiktokAccessState(
     const element = doc.querySelector<HTMLElement>(sel);
     if (element && isTiktokElementVisible(element)) return "signed_in";
   }
-  const bodyText = (doc.body?.textContent ?? "").toLowerCase();
+  // textContent includes SSR JSON, translation dictionaries and hidden login
+  // templates. Only rendered text can establish a visible login wall.
+  const bodyText = (doc.body?.innerText ?? "").toLowerCase();
   for (const phrase of LOGIN_WALL_TEXTS) {
     if (bodyText.includes(phrase)) return "login_wall";
   }

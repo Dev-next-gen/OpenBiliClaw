@@ -55,7 +55,9 @@ const TIKTOK_TASK_MARKER = "openbiliclaw_tiktok_task";
 const MUTEX_LABEL = "tiktok";
 
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
-const BASE_TIMEOUT_MS = 30_000;
+// Include login hydration plus an owned-profile navigation/resume before
+// spending the separately budgeted scroll rounds.
+const BASE_TIMEOUT_MS = 60_000;
 const PER_ROUND_TIMEOUT_MS = 3_000;
 const MAX_TASK_TIMEOUT_MS = 360_000;
 const TASK_IDLE_TIMEOUT_MS = 120_000;

@@ -134,13 +134,13 @@ test("buildTiktokTaskUrl lands on the tiktok.com homepage with the task marker",
 });
 
 test("computeTiktokTaskTimeoutMs scales with scroll rounds and caps at the ceiling", () => {
-  assert.equal(computeTiktokTaskTimeoutMs(likeTask), 30_000);
+  assert.equal(computeTiktokTaskTimeoutMs(likeTask), 60_000);
   const withRounds = computeTiktokTaskTimeoutMs({
     id: "t",
     type: "tt_collect",
     payload: { max_scroll_rounds: 15 },
   });
-  assert.equal(withRounds, 30_000 + 15 * 3_000);
+  assert.equal(withRounds, 60_000 + 15 * 3_000);
   const huge = computeTiktokTaskTimeoutMs({
     id: "t",
     type: "tt_like",
@@ -194,7 +194,7 @@ test("isValidTiktokTask accepts the backend's top-level spread payload", () => {
 test("computeTiktokTaskTimeoutMs reads the top-level spread payload", () => {
   assert.equal(
     computeTiktokTaskTimeoutMs({ id: "t", type: "tt_collect", max_scroll_rounds: 15 }),
-    30_000 + 15 * 3_000,
+    60_000 + 15 * 3_000,
   );
 });
 

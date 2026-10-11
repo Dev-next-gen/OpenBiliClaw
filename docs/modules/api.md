@@ -466,3 +466,8 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 `GET /api/sources/tiktok/next-task` 返回冻结的 bootstrap_profile/scopes/max_items_per_scope/profile_update。`POST task-result` 的成功/partial/degraded 需 viewer_handle（可选 viewer_sec_uid）；后端规范化并散列 observed claim，首次绑定画像账号，跨任务切号返回 409 `tiktok_account_switch_requires_reset`，已 staged 的首份结果不被重试覆盖。`videos` 非数组返回 422；scope 与累计预算在后端限制，超额裁剪的最终结果标记 degraded，后续重试不能洗掉该状态。同一 handle 的可选 secUid 补齐/暂缺不改变 account_key，已知 secUid 冲突仍拒绝。
 
 仅 profile_update、incremental 或当前 init-owned 任务进入画像 ingress；普通 smoke 不写 seen、画像或全局账号绑定。账号身份不冒充上游 verified。协议桥与崩溃恢复测试见 [台账](../platform-source-acceptance.tiktok.md)。
+
+
+### TikTok 凭据同步与运行时刷新
+
+`POST /api/sources/tiktok/credential` 在真实验证和持久化之后比较有效凭据；发生变化时经现有 lane handoff 重建运行时，使启动时的访客客户端立即切换到登录态搜索。相同 Cookie 重投、或 env 优先导致有效凭据未变时不重启任务。`persist_credential` 用 `PersistResult.runtime_dirty` 传递这一差异。

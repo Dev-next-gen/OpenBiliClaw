@@ -76,7 +76,7 @@ class FakeElement {
 }
 
 class FakeDocument {
-  readonly body: { textContent: string };
+  readonly body: { textContent: string; innerText: string };
   readonly defaultView: { getComputedStyle: (el: FakeElement) => { overflowY: string } } | null;
   private readonly videoAnchors: FakeElement[];
   private readonly profileAnchors: FakeElement[];
@@ -95,7 +95,7 @@ class FakeDocument {
     this.profileAnchors = opts.profileAnchors ?? [];
     this.textNodes = opts.textNodes ?? [];
     this.presentSelectors = new Set(opts.presentSelectors ?? []);
-    this.body = { textContent: opts.bodyText ?? "" };
+    this.body = { textContent: opts.bodyText ?? "", innerText: opts.bodyText ?? "" };
     this.defaultView = opts.defaultView ?? null;
   }
 
@@ -400,4 +400,12 @@ test("hidden auth templates are not evidence but visible walls override stale ma
     return null;
   } } as unknown as Document;
   assert.equal(detectTiktokAccessState(wallDoc, "https://www.tiktok.com/"), "login_wall");
+});
+
+test("hidden SSR login translations cannot establish a visible login wall", () => {
+  const doc = {
+    body: { textContent: '{"login_label":"Log in to TikTok"}', innerText: "" },
+    querySelector: () => null,
+  } as unknown as Document;
+  assert.equal(detectTiktokAccessState(doc, "https://www.tiktok.com/"), "logged_out");
 });

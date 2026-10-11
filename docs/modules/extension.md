@@ -869,3 +869,18 @@ Popup 按当前回合和 hop 累积 `delta`，历史刷新/会话切回可恢复
 - fixtures / Python↔TS 协议测试不代表已安装真站验收；Chrome 控制连接当前失败。详见 [台账](../platform-source-acceptance.tiktok.md)。
 
 后端 CI 显式使用 Node 22 执行 Python next-task → 原始 TypeScript dispatcher → API ingress 协议回归，防止两端各自单测通过却不能互通；此测试使用合成浏览器响应。
+
+
+### TikTok 登录墙文本边界
+
+TikTok 内容脚本的 `detectTiktokAccessState` 仅以页面可见文字作为登录墙文字依据，避免 SSR/翻译脚本中的登录文案误报；可见登录控件仍优先，缺少正向登录证据仍失败关闭。开发热重载可通过 `POST /api/extension/reload` 广播到当前已连接的扩展；装载路径与产物摘要必须另行核对。
+
+`runScope` 在执行前有界等待可识别的已登录 viewer；本人资料导航等待页面 URL 与身份标题一致，最多 10 秒，不以点击成功代替归属证据。原 task idle/absolute deadline 与累计预算仍生效。
+
+渲染等待同时限制轮数和墙钟时间；已在本人 URL 时原地等待标题，避免重复点击资料入口导致整页导航恢复循环。
+
+本人资料归属验证兼容 `user-title` / `user-subtitle` 两个可见身份标题；必须精确匹配 viewer handle，并继续要求本人 URL。
+
+TikTok 每 scope 的基础预算由 30 秒调整为 60 秒，覆盖新增渲染等待和整页恢复；滚动预算公式、360 秒绝对上限与 120 秒 idle 限制保持。
+
+范围切换后先有界等待 `resolveTiktokScopeRoot` 成功，再进入收集器；未确认范围的容器不回退为整页扫描。

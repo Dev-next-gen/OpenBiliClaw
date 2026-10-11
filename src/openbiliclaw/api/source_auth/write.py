@@ -875,8 +875,13 @@ def persist_credential(
     if slug == "tiktok":
         from openbiliclaw.sources.tiktok_auth import TiktokCookieManager
 
+        previous = current_credential(slug, cfg=cfg)
         TiktokCookieManager(cfg.data_path).set_cookie(text, source=source)
-        return PersistResult(persisted=True, cookie_names=names)
+        return PersistResult(
+            persisted=True,
+            cookie_names=names,
+            runtime_dirty=previous != current_credential(slug, cfg=cfg),
+        )
 
     if slug == "twitter":
         from openbiliclaw.sources.x_auth import XCookieManager

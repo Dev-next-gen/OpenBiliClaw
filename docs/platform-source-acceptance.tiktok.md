@@ -1,5 +1,24 @@
 # TikTok 来源验收报告
 
+## 2026-10-11 真实请求续验（PR #286）
+
+本轮结论仍为 **incremental only**：公开发现的真实推荐链路通过；账号采集实际运行后仍失败，不能用单元测试或 Cookie 校验替代四项账号能力验收。脱敏证据见 [real-e2e.json](testing/assets/2026-10-11-tiktok-full-live/real-e2e.json)。
+
+| 链路 | 结果 | 实际证据 |
+| --- | --- | --- |
+| 正常后端 / 登录凭据 | PASS | 目标 worktree 的 `create_app()`，真实 Uvicorn/TCP 8420；隔离配置、数据与 SQLite；扩展通过真实 WebSocket 自动同步 Cookie；TikTok passport 校验 HTTP 200 / verified。有效模型与 network 配置对象保存前后相等，无 mocks 或 ASGITransport。 |
+| 搜索 → 评估 → 推荐 | PASS | 使用隔离副本中的真实已有画像，两次真实搜索共 fetched=12 / enqueued=12 / evaluated=12 / admitted=1 / rejected_low_score=11 / copy_ready=1；真实 GET recommendations HTTP 200 返回 1 条 TikTok 内容，来源与 HTTPS 视频标识正确。本地 Ollama embedding 与配置中的远程聊天模型均真实调用；经历 429 和首轮 180 秒测试窗口超时后，经配置的后备链重试完成。不是 TikTok 初始化生成的画像。 |
+| 实际安装产物 / dispatch | PASS | Chrome 注册目录原为 tiktok-source-readiness。逐次备份 manifest/dist/icons/popup，校验候选构建摘要后经 `/api/extension/reload` 热重载；实际扩展领取任务（pending → in_progress），最后恢复原安装产物。诊断构建仅增加只读、无凭据字段，不当作未经修改的发布构建。 |
+| 四 scope 账号采集 | FAIL | 原构建四 scope 均误报 login_wall。诊断证明页面没有可见登录提示，实际读到了隐藏脚本文案；修复后推进到本人页/列表确认，仍出现 profile_entry_not_found、scope_root_not_proven，以及一次重载后才结算的 task_idle_timeout。新建无画像的正常后端上再次实测，普通 smoke 仍未稳定产出本人列表。 |
+| 普通 smoke 数据边界 | PASS（干净运行） | 新隔离后端无画像，profile_update=false 的失败任务未创建画像。之前含已有画像的诊断进程发生后台学习，因此那次原始画像文件差异不记通过；后续 Cookie 刷新禁用额外模型预热。生产数据未作为测试写入目标。 |
+| 画像初始化 / 周期增量 | BLOCKED | 尚无通过本人归属和 scope 验证的真实账号信号，未把已有画像或公开搜索当作账号初始化。 |
+| 站内收藏 | NOT_RUN | 未向 TikTok 执行任何收藏/取消收藏写入。 |
+
+已修复：迟到 Cookie 未刷新访客客户端；隐藏登录翻译误报；登录/资料/列表 hydration 等待；本人资料显示名与账号副标题兼容；本人页重复导航；scope 基础预算覆盖导航等待。可见登录墙与账号边界仍失败关闭。完整浏览器页面检查目前仍受 Codex Chrome 控制连接超时限制；账号门未通过前不得声明 full 完成。
+
+验证命令：`pytest tests/test_source_auth_contract.py tests/test_tiktok_producer.py tests/test_tiktok_web.py tests/test_tiktok_readiness.py tests/test_tiktok_contract.py tests/test_docs_index.py`；`ruff check src/ tests/`；`mypy src/`；扩展 `npm test`、Chrome/Firefox build（均从目标 worktree，Python 显式设置 PYTHONPATH）。最终结果：后端相关套件 **375 passed / 37 skipped**；扩展全量 **1781 passed / 0 failed**；Ruff / MyPy（318 文件）及 Chrome/Firefox build + assets 全部通过。本轮未把先前 baseline 的全后端 CI 当作新补修的全量结果。
+
+
 本轮续验日期：2026-10-10。登录态搜索、安装版 Chrome 扩展 Cookie 自动同步和真实模型管线已通过；当前详细结果见文末续验。历史段落保留其当时的证据边界，不代表当前仍缺 Cookie。discovery-only 范围的真实功能验收已补齐；本机全量与修复后回归结果见文末，当前分支 CI 以 [PR #275 checks](https://github.com/whiteguo233/OpenBiliClaw/pull/275/checks) 为准。
 
 ## PR #286 独立验收与修复（2026-10-11）
@@ -35,10 +54,10 @@
 | 周期增量（source_incremental_sync，默认关不变） | required | PASS | 提交 4644dded；`SOURCE_ORDER` / `_TASK_SPECS` / `_SOURCE_CONFIG_ALIASES` / `_SOURCE_CONFIG_NAMES` / `_SOURCE_INTERVAL_FIELDS` 注册，`source_incremental_enabled` 与 `sources.tiktok.incremental_enabled` 双默认关不变；`seed_guided_init_attempts` 把 tiktok 归入 ok-only 组 |
 | 站内收藏（ExtensionNativeSaveBroker + native-save/tiktok.ts，auto_sync 默认关，精确授权 E2E） | required | PASS | 提交 e65d7e21 / 0cb57594：broker / adapter / identity 注册（`is_native_save_local_only("tiktok")=False`），executor 目标 `TikTok Favorites`，auto_sync 默认关闭；`test_extension_native_save_broker.py` / `test_saved_sync_extension_adapters.py` 等新增用例通过；真实受控 E2E 仍待人工授权运行（见下行） |
 | 契约测试反转（test_tiktok_contract.py 排除断言改写为正向） | required | PASS | 排除断言全部改写为正向注册断言并通过（12 项）；契约登记的 `test_tiktok_engagement_danmaku_is_unavailable` / `test_tiktok_media_deep_link_uses_https` 精确存在；audit `required_missing=0`（PASS 46 / MANUAL 14 / N/A 2 / MISSING 0，`registration_check_passed=true`） |
-| 真实验收（登录态 bootstrap/增量/native-save 受控 E2E） | required | NOT_RUN | 需要用户已登录 TikTok 的浏览器会话做真实 bootstrap / 增量 / native-save 受控 E2E（精确命名授权 + `allow_state_changing=true`） |
+| 真实验收（登录态 bootstrap/增量/native-save 受控 E2E） | required | FAIL | 本轮实际装载构建并执行账号任务，但本人页/列表确认仍失败；初始化与增量 BLOCKED，native-save NOT_RUN，见顶部真实续验。 |
 | 文档/交付（模块文档、CHANGELOG、架构图、PR） | required | PASS | `tiktok.md`（账号 bootstrap / guided init / native save 章节）、`cli.md` / `init.md` / `api.md` / `config.md` / `extension.md` / `saved-sync.md`（六平台→七平台）已同步；CHANGELOG 三个升级条目；PR 待上层统一提交 |
 
-总体 verdict：**incremental only** —— required 行中「真实验收」仍 NOT_RUN，登录态真实受控 E2E 完成前不得宣称 complete。
+总体 verdict：**incremental only** —— required 行中「真实验收」仍 FAIL，登录态真实受控 E2E 完成前不得宣称 complete。
 
 ## 范围与 provenance
 

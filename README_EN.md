@@ -634,6 +634,8 @@ TikTok covers: `image proxy → DoH public-address validation → pinned IP / or
 
 TikTok: `formal discovery / inspiration → shared request pacing and durable cooldown → signed Web API → candidate pool`; only auto mode allows yt-dlp fallback. See the [acceptance record](docs/platform-source-acceptance.tiktok.md).
 
+TikTok login sync: `extension cookie → validate and persist → safe runtime rebuild on effective credential change → keyword search`; unchanged credentials do not restart tasks.
+
 TikTok account flow: `manual init / explicitly enabled incremental sync → bootstrap_profile (four scopes and frozen budgets) → extension viewer-owned lists → account binding / staged result → idempotent events → profile`. Native saves use a separate `local membership → durable native-save job → exact-video favorite confirmation` path. Installed authenticated acceptance is still pending; see the [acceptance ledger](docs/platform-source-acceptance.tiktok.md).
 
 Local embedding: `requests / diagnostics → Ollama automatic acceleration → valid vector; runner failure → CPU retry → validated result`. CPU selection is shared for the backend process lifetime; restarting retries automatic acceleration.

@@ -17769,12 +17769,15 @@ def create_app(
                 XSourceHealthStore(ctx.database).clear_relogin_block()
 
         runtime_refreshed = False
-        if slug == "bilibili" and written.runtime_dirty:
+        if slug in {"bilibili", "tiktok"} and written.runtime_dirty:
             # Atomic by contract: a partial ``rebuild_from_config`` leaves the
             # old runtime intact, so a failure here costs a stale client, never
-            # a broken one.
+            # a broken one. TikTok captures its cookie and search availability
+            # at construction, so a late extension sync must replace it too.
             with suppress(Exception):
-                await _rebuild_runtime_with_lane_handoff(load_config())
+                await _rebuild_runtime_with_lane_handoff(
+                    load_config(), run_post_reload_llm_work=slug != "tiktok"
+                )
                 runtime_refreshed = True
 
         event_type = {

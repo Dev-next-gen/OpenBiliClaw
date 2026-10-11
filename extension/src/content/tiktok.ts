@@ -48,6 +48,18 @@ const SCROLL_DELAY_MS = 1_500;
 const NAV_SETTLE_MS = 2_500;
 const TAB_SETTLE_MS = 1_500;
 
+async function waitForRenderedState(predicate: () => boolean): Promise<boolean> {
+  // A completed document can still be waiting for TikTok's client hydration.
+  // Keep this inside the dispatcher's existing idle/absolute task deadlines.
+  const deadline = Date.now() + 10_000;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    if (predicate()) return true;
+    if (Date.now() >= deadline) break;
+    await sleep(250);
+  }
+  return predicate();
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -134,21 +146,29 @@ const SCOPE_TAB_LABELS: Record<"tt_like" | "tt_collect", string[]> = {
 
 function ownProfileVisible(handle: string): boolean {
   if (!isTiktokOwnProfile(location.href, handle)) return false;
-  const heading = document.querySelector<HTMLElement>('[data-e2e="user-title"]');
-  return Boolean(heading && isTiktokElementVisible(heading) &&
-    visibleText(heading).replace(/^@/, "").toLowerCase() === handle.toLowerCase());
+  // TikTok can render the display name as title and the handle as subtitle.
+  // Either field must still match the independently observed viewer exactly.
+  return ['[data-e2e="user-title"]', '[data-e2e="user-subtitle"]'].some((selector) => {
+    const heading = document.querySelector<HTMLElement>(selector);
+    return Boolean(heading && isTiktokElementVisible(heading) &&
+      visibleText(heading).replace(/^@/, "").toLowerCase() === handle.toLowerCase());
+  });
 }
 
 async function ensureOnOwnProfile(handle: string): Promise<boolean> {
   if (!handle) return false;
   if (ownProfileVisible(handle)) return true;
+  if (isTiktokOwnProfile(location.href, handle)) {
+    // Re-clicking this link can full-navigate again before hydration, then
+    // resume the same persisted scope in an endless reload loop.
+    return waitForRenderedState(() => ownProfileVisible(handle));
+  }
   const profileLink = document.querySelector<HTMLElement>('[data-e2e="nav-profile"]');
   if (!profileLink || !isTiktokElementVisible(profileLink)) return false;
   fireRealClick(profileLink);
-  await sleep(NAV_SETTLE_MS);
   // Clicking or changing a URL is not evidence that the app rendered our
   // profile. A full navigation resumes the persisted scope on the new page.
-  return ownProfileVisible(handle);
+  return waitForRenderedState(() => ownProfileVisible(handle));
 }
 
 async function navigateToProfileTab(
@@ -328,6 +348,8 @@ async function runScope(msg: TiktokScopeExecuteMessage, record: ScopeExecutionRe
   let endOfFeedPhrase = "";
   let scrollRounds = 0;
 
+  await waitForRenderedState(() =>
+    resolveAccessState() === "signed_in" && Boolean(resolveViewerHandle()));
   const accessState = resolveAccessState();
   let scopeRoot: HTMLElement | null = null;
   let viewerHandle = record.viewer_handle ?? "";
@@ -382,6 +404,7 @@ async function runScope(msg: TiktokScopeExecuteMessage, record: ScopeExecutionRe
     }
 
     if (!navigationFailed && accessState === "signed_in") {
+      await waitForRenderedState(() => Boolean(resolveTiktokScopeRoot(document, msg.scope)));
       await harvestDom();
       const maxRounds = normalizeTiktokScrollRounds(msg.max_scroll_rounds);
       let stagnantRounds = 0;
