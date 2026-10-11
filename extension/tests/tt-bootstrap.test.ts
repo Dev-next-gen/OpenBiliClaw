@@ -83,3 +83,16 @@ test("viewed-author SSR state never establishes viewer or login", () => {
   assert.deepEqual(extractTiktokViewerFromState(author), { handle: "", secUid: "" });
   assert.equal(extractTiktokLoginStateFromState(author), false);
 });
+
+test("live app-context session user is an identity claim, never independent login proof", () => {
+  const app = { __DEFAULT_SCOPE__: { "webapp.app-context": {
+    user: { uniqueId: "me.user", secUid: "session-sec", nickName: "Display name" },
+  } } };
+  const parsed = readTiktokUniversalData(JSON.stringify(app));
+  assert.deepEqual(parsed.viewer, { handle: "me.user", secUid: "session-sec" });
+  assert.equal(parsed.loggedIn, false);
+  assert.equal(parsed.explicitLoggedOut, false);
+  assert.equal(readTiktokUniversalData(JSON.stringify({ ...app,
+    "webapp.user-context": { isLoggedIn: false },
+  })).explicitLoggedOut, true);
+});

@@ -272,3 +272,17 @@ PYTHONPATH=src python scripts/smoke_tiktok_pipeline.py --config /path/to/config.
 账号 scope 基础预算为 60 秒（包括登录 hydration、本人的资料页导航及恢复），再按滚动轮数追加；整任务上限仍为 360 秒、idle 为 120 秒，CLI 等待仍为 480 秒。
 
 点击范围标签后同样有界等待已确认的 scope root 再采集；静态延迟不能代替列表渲染证明。
+
+
+### 账号入口与初始化复用续修（2026-10-11）
+
+| 已实现行为 | 边界 |
+| --- | --- |
+| 当前桌面版喜欢/收藏显式空态、本人关注空弹窗识别 | 要求本人身份、选中标签/弹窗标题及 scope 专属空文案；不将通用错误、空白或未加载页面当成 empty。此补丁不证明新版非空列表可用。 |
+| 设置页 session viewer 解析 | 接受 canonical `webapp.app-context.user` 身份 claim，同时仍要求正向登录 DOM/显式登录标记；显式登出和导航身份冲突优先拒绝。 |
+| 历史入口导航 | 使用可见头像/更多菜单、`settings-entrance`（本次中文标签为“通用”）进入实际 `/setting`；整页恢复不重开设置。当前测试账号未显示历史入口，仍明确报错。 |
+| TikTok 初始化去重 | 比较 scope、profile_update、采集预算与 incremental owner；仅复用相同契约的在途任务或最新权威 ok/empty 终态，失败/degraded/只读 smoke/部分 scope 不替代初始化。较新的失败优先于旧成功；全局在途互斥不变。 |
+
+公开 API：`enqueue_tiktok_bootstrap()` 签名及 HTTP task-result 协议不变，上述复用条件同时适用于手动初始化与 opt-in 增量。empty 仍不能替代真实行为事件生成画像。扩展 `resolveTiktokScopeRoot(doc, scope, expectedViewer?)` 增加可选 viewer，用于本人关注空弹窗边界；`readTiktokUniversalData()` 增加 `explicitLoggedOut`，身份字段本身不代表已登录。
+
+真实安装版的完整结论与失败记录见[验收台账](../platform-source-acceptance.tiktok.md)。本轮未改变跨模块接线、配置字段、CLI 或安装流程。

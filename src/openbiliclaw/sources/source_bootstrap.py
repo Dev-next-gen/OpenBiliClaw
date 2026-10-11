@@ -679,6 +679,63 @@ def enqueue_dy_bootstrap(
     )
 
 
+def _tiktok_reusable_recent_task(
+    queue: Any, *, recent_hours: float, expected_payload: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Reuse only the same profile-writing contract and successful latest result."""
+    from openbiliclaw.sources.task_result_protocol import staged_terminal_status
+
+    find_recent = getattr(queue, "find_recent_task", None)
+    if not callable(find_recent):
+        return None
+
+    def same_contract(row: dict[str, Any]) -> bool:
+        try:
+            payload = json.loads(str(row.get("payload_json") or "{}"))
+        except (TypeError, ValueError):
+            return False
+        return isinstance(payload, dict) and all(
+            payload.get(key) == expected_payload.get(key)
+            for key in (
+                "scopes",
+                "profile_update",
+                "max_items_per_scope",
+                "max_scroll_rounds",
+                "incremental",
+                "incremental_owner",
+            )
+        )
+
+    active = find_recent(
+        "bootstrap_profile", recent_hours=recent_hours, statuses=("pending", "in_progress")
+    )
+    if isinstance(active, dict) and same_contract(active):
+        return active
+    terminals = [
+        row
+        for status in ("completed", "failed")
+        if isinstance(
+            row := find_recent("bootstrap_profile", recent_hours=recent_hours, statuses=(status,)),
+            dict,
+        )
+    ]
+    if not terminals:
+        return None
+    # A newer failed attempt must not be hidden by the queue's completed-first
+    # ordering. On same-second ties, negative evidence wins conservatively.
+    latest = max(
+        terminals,
+        key=lambda row: (
+            str(row.get("created_at", "")),
+            row.get("status") == "failed",
+            str(row.get("id", "")),
+        ),
+    )
+    if latest.get("status") != "completed" or not same_contract(latest):
+        return None
+    return latest if staged_terminal_status(latest.get("result_json")) in {"ok", "empty"} else None
+
+
 @_serialized_enqueue
 def enqueue_tiktok_bootstrap(
     database: Any,
@@ -699,6 +756,17 @@ def enqueue_tiktok_bootstrap(
         )
     )
 
+    payload = _incremental_payload(
+        {
+            "scopes": ["tt_like", "tt_collect", "tt_history", "tt_follow"],
+            "profile_update": True,
+            "max_items_per_scope": max(1, max_items),
+            "max_scroll_rounds": max(0, scroll_rounds),
+        },
+        incremental,
+        incremental_owner,
+    )
+
     try:
         queue = TiktokTaskQueue(database)
         with _bootstrap_admission_transaction(database):
@@ -706,61 +774,23 @@ def enqueue_tiktok_bootstrap(
                 "OPENBILICLAW_TIKTOK_BOOTSTRAP_DEDUPE_HOURS",
                 DEFAULT_TIKTOK_BOOTSTRAP_DEDUPE_HOURS,
             )
-            find_recent = getattr(queue, "find_recent_task", None)
-            if not force and dedupe_hours > 0 and callable(find_recent):
-                recent = find_recent(
-                    "bootstrap_profile",
-                    recent_hours=dedupe_hours,
-                    statuses=_RECENT_TASK_STATUSES,
+            if not force and dedupe_hours > 0:
+                recent = _tiktok_reusable_recent_task(
+                    queue, recent_hours=dedupe_hours, expected_payload=payload
                 )
                 if recent is not None:
-                    raw_result = recent.get("result_json")
-                    if isinstance(raw_result, dict):
-                        parsed_result = raw_result
-                    elif isinstance(raw_result, (str, bytes, bytearray)):
-                        try:
-                            parsed_result = json.loads(raw_result)
-                        except (TypeError, ValueError):
-                            parsed_result = None
-                    else:
-                        parsed_result = None
-                    recent_is_degraded = (
-                        isinstance(parsed_result, dict)
-                        and str(parsed_result.get("status", "")).strip().lower() == "degraded"
+                    reused = _recent_reuse_result(
+                        recent,
+                        message="  [dim]复用匹配的 TikTok 画像采集任务 ({status})。[/dim]",
+                        notify=notify,
                     )
-                    if recent_is_degraded:
-                        _notify(
-                            notify,
-                            "  [dim]最近的 TikTok bootstrap 任务仅部分完成；"
-                            "本次重新入队以补齐分页。[/dim]",
-                        )
-                    else:
-                        reused = _recent_reuse_result(
-                            recent,
-                            message=(
-                                "  [dim]复用最近的 TikTok bootstrap 任务"
-                                "({status})；需要重新拉取可设 "
-                                "OPENBILICLAW_TIKTOK_BOOTSTRAP_DEDUPE_HOURS=0。[/dim]"
-                            ),
-                            notify=notify,
-                        )
-                        if reused is not None:
-                            return reused
+                    if reused is not None:
+                        return reused
 
             active = _active_bootstrap_result(database, notify=notify)
             if active is not None:
                 return active
 
-            payload = _incremental_payload(
-                {
-                    "scopes": ["tt_like", "tt_collect", "tt_history", "tt_follow"],
-                    "profile_update": True,
-                    "max_items_per_scope": max(1, max_items),
-                    "max_scroll_rounds": max(0, scroll_rounds),
-                },
-                incremental,
-                incremental_owner,
-            )
             task_id = queue.enqueue_with_id("bootstrap_profile", payload, daily_budget=10)
     except Exception as exc:
         _notify(notify, f"  [yellow]TikTok 初始化信号未导入: {exc}[/yellow]")

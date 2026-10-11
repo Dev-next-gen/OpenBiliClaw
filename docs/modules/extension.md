@@ -891,3 +891,15 @@ TikTok 每 scope 的基础预算由 30 秒调整为 60 秒，覆盖新增渲染�
 - 本人标题出现后，喜欢/收藏标签仍可能尚未挂载；`navigateToProfileTab` 单独等待目标可见入口（最多 10 秒），然后点击并等待已证明的 scope root。实机已从提前 `scope_tab_not_found` 推进到 `liked-tab[aria-selected=true]`；列表识别尚未通过，不扩大为整页抓取。
 - 公共 API `TiktokTaskResultRetryOptions.requestTimeoutMs` 为结果回传单次尝试的可选上限，默认且最大 10 秒，覆盖 URL 解析与 POST。超时中止请求并释放串行等待，原 canonical body 留在 durable FIFO；迟到的 URL 解析不再发送 POST。回调重试不会重做上游收藏动作。
 - 已用永不完成的 POST 和迟到 URL 解析验证：失败可退出，原结果不丢失，恢复后按原 body 重放。该回归不冒充真实断连原因；本轮后续浏览器断连来自临时诊断包构建失败。
+
+
+### TikTok 当前桌面页兼容与消息注册等待（2026-10-11）
+
+| 已实现行为 | 验证边界 |
+| --- | --- |
+| 喜欢/收藏/关注显式空态 | 当前页面形态的回归包括未知 viewer、他人弹窗、followers、隐藏/空白/通用错误等反例；不扩大到任意 main 下的视频列表。 |
+| session viewer 与设置页恢复 | canonical app-context user 需额外正向登录证据，显式 logout 覆盖 DOM；设置页无 nav-profile 时仍可识别 session viewer。 |
+| 分阶段 hydration | 登录与本人标题最多等待 20 秒，关注弹窗最多 20 秒；scope 基础预算 90 秒，总绝对上限 360 秒与 idle 120 秒不变。 |
+| 内容脚本投递 | 文档 complete/12 秒兜底之后，如果 receiver 尚未注册，以同一 scope 最多重试 20 秒；scope/任务切换或清理后停止，重试不延长任务 deadline，不重放站内写操作。 |
+
+公开 API：`readTiktokUniversalData` 新增显式登出字段，`resolveTiktokScopeRoot` 可传预期 viewer；`TIKTOK_SCOPE_EXECUTE` 和 task-result wire 不变。Chrome/Firefox 构建只能证明可打包，不能替代已安装 Chrome 的账号链路验收；实时结果见[台账](../platform-source-acceptance.tiktok.md)。

@@ -568,3 +568,49 @@ test("terminal cleanup never deletes another task's content checkpoint", async (
     assert.equal(state.sessionStorage[key], checkpoint);
   } finally { resetTiktokTaskStateForTest(); state.restore(); }
 });
+
+
+test("slow content registration retries the same scope without failing or extending its deadline", async () => {
+  const state = installChromeMock();
+  installAlarmsMock();
+  let attempts = 0;
+  state.sendMessageImpl = async () => {
+    if (++attempts === 1) throw new Error("Receiving end does not exist");
+    return undefined;
+  };
+  try {
+    await executeTask({ id: "slow-register", type: "tt_like" });
+    await settleSessionWrites();
+    const before = state.sessionStorage[TIKTOK_TASK_STATE_SESSION_KEY] as PersistedTiktokTaskState;
+    await new Promise((resolve) => setTimeout(resolve, 550));
+    assert.equal(attempts, 2);
+    assert.equal(taskResultPosts(state).length, 0);
+    assert.deepEqual(state.sentMessages[0], state.sentMessages[1]);
+    const after = state.sessionStorage[TIKTOK_TASK_STATE_SESSION_KEY] as PersistedTiktokTaskState;
+    assert.equal(after.deadline_ms, before.deadline_ms);
+    assert.equal(after.idle_deadline_ms, before.idle_deadline_ms);
+  } finally { resetTiktokTaskStateForTest(); state.restore(); }
+});
+
+test("delivery retries stop after cleanup and fail within the delivery budget", async () => {
+  for (const cleanup of [true, false]) {
+    const state = installChromeMock();
+    installAlarmsMock();
+    const actualNow = Date.now;
+    let now = actualNow();
+    Date.now = () => now;
+    let attempts = 0;
+    state.sendMessageImpl = async () => { attempts++; throw new Error("no listener"); };
+    try {
+      await executeTask({ id: "no-register", type: "tt_like" });
+      await settleSessionWrites();
+      if (cleanup) resetTiktokTaskStateForTest();
+      now += 20_001;
+      await new Promise((resolve) => setTimeout(resolve, 550));
+      await settleSessionWrites();
+      assert.equal(attempts, cleanup ? 1 : 2);
+      assert.equal(taskResultPosts(state).length, cleanup ? 0 : 1);
+      if (!cleanup) assert.equal(taskResultPosts(state)[0].error, "sendMessage_failed");
+    } finally { Date.now = actualNow; resetTiktokTaskStateForTest(); state.restore(); }
+  }
+});

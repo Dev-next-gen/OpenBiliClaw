@@ -292,6 +292,7 @@ def test_force_false_reuses_recent_task(
             recent={
                 "id": "recent-task-id",
                 "status": "completed",
+                "payload_json": json.dumps(_expected_payload),
                 "result_json": json.dumps({"_openbiliclaw_terminal_status": "ok"}),
             },
             captured=captured,
@@ -1000,3 +1001,56 @@ class _SeedMemory:
         if result is not None:
             self.state = result
         return self.state
+
+
+@pytest.mark.parametrize("kind", ["smoke", "partial_scopes", "failed", "degraded"])
+def test_tiktok_init_does_not_reuse_ineligible_terminal(tmp_path: Path, kind: str) -> None:
+    from openbiliclaw.sources import source_bootstrap
+    from openbiliclaw.sources.tiktok_tasks import TiktokTaskQueue
+    from openbiliclaw.storage.database import Database
+
+    database = Database(tmp_path / "tiktok-retry.db")
+    database.initialize()
+    queue = TiktokTaskQueue(database)
+    payload = {
+        "scopes": ["tt_like", "tt_collect", "tt_history", "tt_follow"],
+        "profile_update": kind != "smoke",
+        "max_items_per_scope": 300,
+        "max_scroll_rounds": 15,
+    }
+    if kind == "partial_scopes":
+        payload["scopes"] = ["tt_like"]
+    task_id = queue.enqueue_with_id("bootstrap_profile", payload)
+    assert task_id
+    if kind == "failed":
+        assert queue.fail(task_id, error="history_entry_not_found")
+    else:
+        queue.stage_final_result(
+            task_id, terminal_status="degraded" if kind == "degraded" else "ok"
+        )
+        assert queue.complete_staged_result(task_id)
+    retried = source_bootstrap.enqueue_tiktok_bootstrap(database)
+    assert retried.created is True
+    assert retried.task_id != task_id
+
+
+@pytest.mark.parametrize("newer_failure", [False, True])
+def test_tiktok_init_reuses_success_unless_superseded(tmp_path: Path, newer_failure: bool) -> None:
+    from openbiliclaw.sources import source_bootstrap
+    from openbiliclaw.sources.tiktok_tasks import TiktokTaskQueue
+    from openbiliclaw.storage.database import Database
+
+    database = Database(tmp_path / "tiktok-reuse.db")
+    database.initialize()
+    queue = TiktokTaskQueue(database)
+    first = source_bootstrap.enqueue_tiktok_bootstrap(database)
+    assert first.created and first.task_id
+    queue.stage_final_result(first.task_id, terminal_status="ok")
+    assert queue.complete_staged_result(first.task_id)
+    if newer_failure:
+        second = source_bootstrap.enqueue_tiktok_bootstrap(database, force=True)
+        assert second.created and second.task_id
+        assert queue.fail(second.task_id, error="history_entry_not_found")
+    result = source_bootstrap.enqueue_tiktok_bootstrap(database)
+    assert result.created is newer_failure
+    assert (result.task_id == first.task_id) is not newer_failure

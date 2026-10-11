@@ -115,6 +115,8 @@ const EMPTY_STATE_TEXTS: Record<TiktokScope, readonly string[]> = {
     "liked videos will appear here",
     "还没有喜欢的视频",
     "暂无喜欢的视频",
+    "还没有赞过任何视频",
+    "赞过的视频将会显示在这里",
   ],
   tt_collect: [
     "no favorite videos yet",
@@ -122,6 +124,7 @@ const EMPTY_STATE_TEXTS: Record<TiktokScope, readonly string[]> = {
     "favorites will appear here",
     "还没有收藏的视频",
     "暂无收藏",
+    "你收藏的作品将显示在这里",
   ],
   tt_history: [
     "no watch history",
@@ -135,6 +138,7 @@ const EMPTY_STATE_TEXTS: Record<TiktokScope, readonly string[]> = {
     "no accounts followed",
     "还没有关注任何人",
     "暂无关注",
+    "此用户关注的人将会出现在这里",
   ],
 };
 
@@ -422,7 +426,7 @@ export function isTiktokOwnProfile(url: string, handle: string): boolean {
 
 export const TIKTOK_SCOPE_TAB_SELECTORS: Record<TiktokScope, readonly string[]> = {
   tt_like: ['[data-e2e="liked-tab"]', '[data-e2e="user-liked-tab"]', '[data-e2e="user-tab-liked"]'],
-  tt_collect: ['[data-e2e="favorites-tab"]', '[data-e2e="user-favorites-tab"]', '[data-e2e="user-tab-favorites"]'],
+  tt_collect: ['[data-e2e="favorites-tab"]', '[data-e2e="user-favorites-tab"]', '[data-e2e="user-tab-favorites"]', '[data-e2e="user-page"] [role="tab"][class*="--PFavorite"]'],
   tt_follow: [], tt_history: [],
 };
 const SCOPE_ROOT_SELECTORS: Record<TiktokScope, string> = {
@@ -433,7 +437,9 @@ const SCOPE_ROOT_SELECTORS: Record<TiktokScope, string> = {
 };
 
 /** Require an identifiable active list; never use document/main/generic modal. */
-export function resolveTiktokScopeRoot(doc: Document, scope: TiktokScope): HTMLElement | null {
+export function resolveTiktokScopeRoot(
+  doc: Document, scope: TiktokScope, expectedViewer = "",
+): HTMLElement | null {
   const roots = new Set<HTMLElement>(
     Array.from(doc.querySelectorAll<HTMLElement>(SCOPE_ROOT_SELECTORS[scope])).filter(isTiktokElementVisible),
   );
@@ -443,6 +449,33 @@ export function resolveTiktokScopeRoot(doc: Document, scope: TiktokScope): HTMLE
       const panelId = tab.getAttribute("aria-controls");
       const panel = panelId ? doc.getElementById(panelId) : null;
       if (panel && panel.getAttribute("role") === "tabpanel" && isTiktokElementVisible(panel)) roots.add(panel);
+      // The live desktop profile uses aria-selected without aria-controls.
+      // Its explicit empty message is scoped to the same profile layout as
+      // the selected tab. Never treat a generic main/error box as a list.
+      if (!panelId && (scope === "tt_like" || scope === "tt_collect")) {
+        const layout = tab.closest<HTMLElement>('[class*="--DivShareLayoutMain"]');
+        for (const empty of Array.from(layout?.querySelectorAll<HTMLElement>(
+          'main[class*="--MainDetailWrapper"] [class*="--DivErrorContainer"]',
+        ) ?? [])) {
+          if (isTiktokElementVisible(empty) && detectTiktokEmptyState(empty, scope) &&
+              !empty.querySelector('a[href*="/video/"], a[href*="/photo/"]')) roots.add(empty);
+        }
+      }
+    }
+  }
+  if (scope === "tt_follow" && /^[\w.]{2,24}$/.test(expectedViewer)) {
+    for (const popup of Array.from(doc.querySelectorAll<HTMLElement>(
+      '[data-e2e="follow-info-popup"][role="dialog"]',
+    ))) {
+      const heading = popup.querySelector<HTMLElement>("h1");
+      if (!isTiktokElementVisible(popup) || !heading || !isTiktokElementVisible(heading) ||
+          (heading.textContent ?? "").trim().replace(/^@/, "").toLowerCase() !== expectedViewer.toLowerCase()) continue;
+      for (const empty of Array.from(popup.querySelectorAll<HTMLElement>('[class*="--DivEmptyListContainer"]'))) {
+        // This exact message names following, whereas the adjacent followers
+        // tab has different text. A blank popup never counts as empty.
+        if (isTiktokElementVisible(empty) && detectTiktokEmptyState(empty, scope) &&
+            !empty.querySelector('a[href*="/@"]')) roots.add(empty);
+      }
     }
   }
   const narrow = [...roots].filter((root) => ![...roots].some((other) => other !== root && root.contains(other)));

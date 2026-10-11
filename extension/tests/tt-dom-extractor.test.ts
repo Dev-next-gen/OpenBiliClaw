@@ -409,3 +409,59 @@ test("hidden SSR login translations cannot establish a visible login wall", () =
   } as unknown as Document;
   assert.equal(detectTiktokAccessState(doc, "https://www.tiktok.com/"), "logged_out");
 });
+
+// Shape observed in the signed-in desktop profile: selected tab has no
+// aria-controls; the owned layout contains a scoped, explicit empty message.
+test("live Chinese liked-empty panel requires the selected tab and matching layout", () => {
+  const textSelector = "div, span, p, h1, h2, h3";
+  const emptySelector = 'main[class*="--MainDetailWrapper"] [class*="--DivErrorContainer"]';
+  const make = (text: string, selected = true, hidden = false, inLayout = true) => {
+    const empty = new FakeElement({ attrs: hidden ? { "aria-hidden": "true" } : {},
+      selectorMap: { [textSelector]: [new FakeElement({ textContent: text })] } });
+    const layout = new FakeElement({ selectorMap: { [emptySelector]: inLayout ? [empty] : [] } });
+    const tab = new FakeElement({ attrs: { "aria-selected": String(selected) }, closestElement: layout });
+    const doc = { querySelectorAll: (selector: string) => selector === '[data-e2e="liked-tab"]' ? [tab] : [] } as unknown as Document;
+    return { doc, empty };
+  };
+  const live = make("还没有赞过任何视频");
+  assert.equal(resolveTiktokScopeRoot(live.doc, "tt_like"), live.empty);
+  assert.equal(detectTiktokEmptyState(live.empty as unknown as ParentNode, "tt_like"), "还没有赞过任何视频");
+  for (const invalid of [make("还没有赞过任何视频", false), make("还没有赞过任何视频", true, true),
+    make("还没有赞过任何视频", true, false, false), make("网络错误，请重试"), make("上传你的首发视频")]) {
+    assert.equal(resolveTiktokScopeRoot(invalid.doc, "tt_like"), null);
+  }
+  assert.equal(resolveTiktokScopeRoot(live.doc, "tt_collect"), null);
+});
+
+test("live Favorites tab without data-e2e can prove only its scoped affirmative empty", () => {
+  const empty = new FakeElement({ selectorMap: { "div, span, p, h1, h2, h3": [new FakeElement({ textContent: "你收藏的作品将显示在这里。" })] } });
+  const layout = new FakeElement({ selectorMap: {
+    'main[class*="--MainDetailWrapper"] [class*="--DivErrorContainer"]': [empty],
+  } });
+  const make = (selected: boolean) => ({ querySelectorAll: (selector: string) =>
+    selector === '[data-e2e="user-page"] [role="tab"][class*="--PFavorite"]'
+      ? [new FakeElement({ attrs: { "aria-selected": String(selected) }, closestElement: layout })] : [],
+  }) as unknown as Document;
+  assert.equal(resolveTiktokScopeRoot(make(true), "tt_collect"), empty);
+  assert.equal(resolveTiktokScopeRoot(make(false), "tt_collect"), null);
+  assert.equal(resolveTiktokScopeRoot(make(true), "tt_like"), null);
+});
+
+test("live following-empty popup must match viewer and the following-specific message", () => {
+  const make = (heading: string, text: string, hidden = false) => {
+    const empty = new FakeElement({ selectorMap: { "div, span, p, h1, h2, h3": [new FakeElement({ textContent: text })] } });
+    const popup = new FakeElement({ attrs: hidden ? { "aria-hidden": "true" } : {}, selectorMap: {
+      h1: [new FakeElement({ textContent: heading })], '[class*="--DivEmptyListContainer"]': [empty],
+    } });
+    const doc = { querySelectorAll: (selector: string) => selector === '[data-e2e="follow-info-popup"][role="dialog"]' ? [popup] : [] } as unknown as Document;
+    return { doc, empty };
+  };
+  const own = make("@me.user", "此用户关注的人将会出现在这里");
+  assert.equal(resolveTiktokScopeRoot(own.doc, "tt_follow", "me.user"), own.empty);
+  assert.equal(resolveTiktokScopeRoot(own.doc, "tt_follow"), null);
+  for (const invalid of [make("someone.else", "此用户关注的人将会出现在这里"),
+    make("me.user", "关注此用户的人将会出现在这里"), make("me.user", ""),
+    make("me.user", "此用户关注的人将会出现在这里", true)]) {
+    assert.equal(resolveTiktokScopeRoot(invalid.doc, "tt_follow", "me.user"), null);
+  }
+});

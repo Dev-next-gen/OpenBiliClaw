@@ -1,5 +1,33 @@
 # TikTok 来源验收报告
 
+## 2026-10-11 重新加载后的账号页面续修
+
+范围 `capability-increment`，基线 `1df4e59f`，独立 repair worktree；结论仍为 **incremental only**。本节更新上一次“需手动重新加载”的运行状态，不把局部诊断成功升级为 full 验收通过。脱敏记录见 [real-e2e.json](testing/assets/2026-10-11-tiktok-account-resume/real-e2e.json)。
+
+已修复当前页面中可重现的缺陷：
+
+- 喜欢、收藏标签无 `aria-controls` 时，识别属于本人且已选中 scope 的专属显式空态；关注弹窗要求标题精确匹配 viewer 和 following 专属空文案。隐藏、他人、followers、空白或通用错误不作 empty。
+- 设置页没有 nav-profile 链接时，从 canonical app-context session user 取身份，并要求额外正向登录证据；显式 logout 和冲突身份拒绝。使用实际更多菜单的 `settings-entrance`（中文“通用”）进入 `/setting`，整页恢复不再重开设置。
+- 登录/本人页/关注弹窗分阶段等待；scope 基础预算 90 秒，360 秒绝对上限和 120 秒 idle 不变。内容脚本尚未注册时最多重投 20 秒，同一任务/scope 才可继续，清理后停止，重投不延长 deadline。
+- 初始化只复用匹配 profile_update、完整 scope、预算及增量 owner 的在途或最新权威成功任务；只读 smoke、部分 scope、失败与 degraded 任务不再替代正式初始化。SQLite 回归证明修复前 smoke/partial/failed 三类失败，修复后全部通过。
+
+| 实际链路 | 结果 | 证据与限制 |
+| --- | --- | --- |
+| Cookie / 后端 / 安装产物 | PASS | 扩展真实同步、passport HTTP 200 verified；正常 Uvicorn 8420、隔离配置和 SQLite，模型及 network 对象保持一致。逐次完整 build/assets 通过后才备份/替换注册目录并热重载、核对摘要。一次传输失败不标记 Cookie 失效。 |
+| 喜欢、收藏、关注显式空态 | PASS（诊断构建的独立空态） | 真实 Chrome 分别确认本人三种空列表，接受行数 0。诊断构建只增加只读证据，不代表最终正式构建全链通过，不证明新版非空列表采集。 |
+| 四 scope 正式构建 | FAIL | 新隔离后端依然出现 sendMessage_failed、scope_root_not_proven、logged_out、idle timeout。补投递重试后的最后一次三 scope 任务均 logged_out，无消息投递失败；仅表明缺少正向登录证据，不据此推断 Cookie 过期或 Intel 不兼容。 |
+| 历史入口 | FAIL | 已成功导航当前账号 `/setting` 且保留 viewer；渲染设置项里没有找到历史/活动中心入口，返回 history_entry_not_found。未伪造空历史。 |
+| 正式初始化 | FAIL | 真实 `POST /api/init` 返回 202，并新建 profile_update=true 四 scope 任务，未复用前面的 smoke。任务无有效信号，最终 reason=empty_signals / initialized=false，没有画像产物。 |
+| 周期增量 | BLOCKED | 尚无该真实账号的有效初始画像；全局/来源周期开关保持关闭。未用已有画像替代本轮账号初始化。 |
+| 站内收藏 | NOT_RUN | 未执行收藏/取消收藏。真实写操作仍缺用户指定的允许测试视频，未用任意推荐视频替代授权目标。 |
+
+测试结束已按 SHA-256 恢复原注册目录安装包，停止本轮隔离后端，清除私有 Cookie、SQLite、原始 DOM 诊断及日志；用户主数据和上游收藏未作为写入目标。
+
+验证：扩展全量 **1791 passed / 0 failed**；新增后端 bootstrap 回归及同文件测试 **114 passed**；相关后端套件 **312 passed / 37 skipped**；文档索引 **5 passed**；Chrome/Firefox build + assets、Ruff、MyPy（318 文件）通过。注册审计 PASS 46 / MANUAL 14 / N/A 2 / MISSING 0，只证明登记完整。
+
+
+全量 `pytest -q` 实际结果为 **10428 passed / 65 skipped / 2 failed**（2011.94 秒），不是全绿。`test_login_codex_import_uses_source_path` 出现 RemoteProtocolError，目标分支与基线的定点重跑均通过；`test_run_guided_init_bounds_stage1_and_stops_extension_worker` 的 30ms 超时/线程取消断言在未改动基线 `1df4e59f` 上单独连续三次复现失败。未扩大本次 TikTok 修复去修改这两个既有测试。
+
 ## 2026-10-11 账号入口续修
 
 范围 `capability-increment`，基线 `618843fb`，原修复 worktree 开始干净。结论 **incremental only**：本轮修复两处可复现缺陷，尚不能把下方账号 FAIL/BLOCKED 改为 PASS。

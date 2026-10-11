@@ -57,7 +57,7 @@ const MUTEX_LABEL = "tiktok";
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 // Include login hydration plus an owned-profile navigation/resume before
 // spending the separately budgeted scroll rounds.
-const BASE_TIMEOUT_MS = 60_000;
+const BASE_TIMEOUT_MS = 90_000;
 const PER_ROUND_TIMEOUT_MS = 3_000;
 const MAX_TASK_TIMEOUT_MS = 360_000;
 const TASK_IDLE_TIMEOUT_MS = 120_000;
@@ -873,28 +873,30 @@ export function onTabReady(
     });
 }
 
-/**
- * Send TIKTOK_SCOPE_EXECUTE to the content script. Failure to deliver
- * (no listener / wrong URL / CSP — e.g. a TikTok login wall where our
- * content script didn't register) is converted into a failed scope
- * result so the task finalises instead of hanging until the timeout.
- */
+/** Deliver through slow content-script registration without retrying another scope. */
 function sendScopeExecuteMessage(): void {
   if (!progress || taskTabId === null) return;
   const sent = progress;
-  void chrome.tabs
-    .sendMessage(taskTabId, {
-      action: "TIKTOK_SCOPE_EXECUTE",
-      data: {
-        task_id: progress.task_id,
-        scope: progress.scope,
-        max_items: progress.max_items,
-        max_scroll_rounds: progress.max_scroll_rounds,
-        max_stagnant_scroll_rounds: progress.max_stagnant_scroll_rounds,
-      },
-    })
-    .catch(() => {
-      void handleTiktokScopeResult({
+  const tabId = taskTabId;
+  const deliveryDeadline = Date.now() + 20_000;
+  const stillCurrent = (): boolean => progress === sent && taskTabId === tabId && taskInFlight;
+  const attempt = async (): Promise<void> => {
+    if (!stillCurrent()) return;
+    try {
+      await chrome.tabs.sendMessage(tabId, {
+        action: "TIKTOK_SCOPE_EXECUTE",
+        data: { ...sent },
+      });
+    } catch {
+      if (!stillCurrent()) return;
+      // The document-complete fallback may run before the content script
+      // exists. Retrying the identical scope is safe: its persistent token
+      // makes the content executor idempotent across full navigation.
+      if (Date.now() < deliveryDeadline) {
+        setTimeout(() => { void attempt(); }, 500);
+        return;
+      }
+      await handleTiktokScopeResult({
         task_id: sent.task_id,
         scope: sent.scope,
         items: [],
@@ -902,7 +904,9 @@ function sendScopeExecuteMessage(): void {
         status: "failed",
         error: "sendMessage_failed",
       });
-    });
+    }
+  };
+  void attempt();
 }
 
 export interface TiktokNativeSaveResultTransport {

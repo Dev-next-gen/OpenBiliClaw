@@ -48,6 +48,10 @@ function getNestedBool(state: unknown, path: string[]): boolean | null {
 const USER_OBJECT_PATHS: readonly string[][] = [
   ["__DEFAULT_SCOPE__", "webapp.user-context", "user"],
   ["webapp.user-context", "user"],
+  // Observed session user on the current desktop homepage and settings page.
+  // This is identity evidence only; it does not supply a login flag.
+  ["__DEFAULT_SCOPE__", "webapp.app-context", "user"],
+  ["webapp.app-context", "user"],
 ];
 
 const LOGIN_FLAG_PATHS: readonly string[][] = [
@@ -103,11 +107,13 @@ export function extractTiktokLoginStateFromState(state: unknown): boolean {
 /** Convenience wrapper: parse script text and apply both extractors. */
 export function readTiktokUniversalData(raw: string): {
   loggedIn: boolean;
+  explicitLoggedOut: boolean;
   viewer: TiktokViewerIdentity;
 } {
   const state = parseTiktokUniversalData(raw);
   return {
     loggedIn: extractTiktokLoginStateFromState(state),
+    explicitLoggedOut: LOGIN_FLAG_PATHS.some((path) => getNestedBool(state, path) === false),
     viewer: extractTiktokViewerFromState(state),
   };
 }

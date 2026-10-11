@@ -48,11 +48,13 @@ const SCROLL_DELAY_MS = 1_500;
 const NAV_SETTLE_MS = 2_500;
 const TAB_SETTLE_MS = 1_500;
 
-async function waitForRenderedState(predicate: () => boolean): Promise<boolean> {
+async function waitForRenderedState(
+  predicate: () => boolean, timeoutMs = 10_000,
+): Promise<boolean> {
   // A completed document can still be waiting for TikTok's client hydration.
   // Keep this inside the dispatcher's existing idle/absolute task deadlines.
-  const deadline = Date.now() + 10_000;
-  for (let attempt = 0; attempt < 40; attempt++) {
+  const deadline = Date.now() + timeoutMs;
+  for (let attempt = 0; attempt < Math.ceil(timeoutMs / 250); attempt++) {
     if (predicate()) return true;
     if (Date.now() >= deadline) break;
     await sleep(250);
@@ -94,38 +96,38 @@ function findClickableByText(labels: string[]): HTMLElement | null {
 // Access state — fail closed, never a pseudo-empty success
 // ---------------------------------------------------------------------------
 
+function readPageIdentity(): ReturnType<typeof readTiktokUniversalData> {
+  return readTiktokUniversalData(
+    document.getElementById(TIKTOK_UNIVERSAL_DATA_ELEMENT_ID)?.textContent ?? "",
+  );
+}
+
 function resolveAccessState(): TiktokAccessState {
   const domState = detectTiktokAccessState(document, location.href);
-  if (domState !== "logged_out") return domState;
-  // DOM markers absent — give the SSR universal-data one chance to
-  // positively confirm the session before failing closed.
-  try {
-    const raw =
-      document.getElementById(TIKTOK_UNIVERSAL_DATA_ELEMENT_ID)?.textContent ?? "";
-    if (raw && readTiktokUniversalData(raw).loggedIn) return "signed_in";
-  } catch {
-    // universal-data is a candidate only; DOM state stays authoritative.
-  }
+  if (domState === "login_wall") return domState;
+  const identity = readPageIdentity();
+  if (identity.explicitLoggedOut) return "logged_out";
+  if (domState === "signed_in" || identity.loggedIn) return "signed_in";
   return domState;
 }
 
 function resolveViewerHandle(): string {
-  try {
-    const raw =
-      document.getElementById(TIKTOK_UNIVERSAL_DATA_ELEMENT_ID)?.textContent ?? "";
-    if (raw) {
-      const { viewer, loggedIn } = readTiktokUniversalData(raw);
-      if (loggedIn && viewer.handle) return viewer.handle;
-    }
-  } catch {
-    // Fall through to DOM.
-  }
+  const identity = readPageIdentity();
+  if (identity.explicitLoggedOut) return "";
   const anchor = document.querySelector<HTMLAnchorElement>(
     '[data-e2e="nav-profile"] a[href*="/@"], a[data-e2e="nav-profile"][href*="/@"]',
   );
   const href = anchor?.getAttribute("href") ?? "";
-  const match = href.match(/\/@([\w.]{2,24})/);
-  return match?.[1] ?? "";
+  const navHandle = href.match(/\/@([\w.]{2,24})(?:[/?#]|$)/)?.[1] ?? "";
+  const sessionHandle = identity.viewer.handle;
+  if (sessionHandle && (identity.loggedIn ||
+      detectTiktokAccessState(document, location.href) === "signed_in")) {
+    // Settings has no nav-profile link. The canonical session user remains
+    // usable with positive login evidence, but conflicting identities fail.
+    if (navHandle && navHandle.toLowerCase() !== sessionHandle.toLowerCase()) return "";
+    return sessionHandle;
+  }
+  return navHandle;
 }
 
 // ---------------------------------------------------------------------------
@@ -161,14 +163,14 @@ async function ensureOnOwnProfile(handle: string): Promise<boolean> {
   if (isTiktokOwnProfile(location.href, handle)) {
     // Re-clicking this link can full-navigate again before hydration, then
     // resume the same persisted scope in an endless reload loop.
-    return waitForRenderedState(() => ownProfileVisible(handle));
+    return waitForRenderedState(() => ownProfileVisible(handle), 20_000);
   }
   const profileLink = document.querySelector<HTMLElement>('[data-e2e="nav-profile"]');
   if (!profileLink || !isTiktokElementVisible(profileLink)) return false;
   fireRealClick(profileLink);
   // Clicking or changing a URL is not evidence that the app rendered our
   // profile. A full navigation resumes the persisted scope on the new page.
-  return waitForRenderedState(() => ownProfileVisible(handle));
+  return waitForRenderedState(() => ownProfileVisible(handle), 20_000);
 }
 
 async function navigateToProfileTab(
@@ -229,6 +231,10 @@ async function navigateToFollowList(handle: string): Promise<ScopeNavReport> {
     '[data-e2e="following"]',
     '[data-e2e="user-following"]',
   ];
+  await waitForRenderedState(() => statSelectors.some((selector) => {
+    const entry = document.querySelector<HTMLElement>(selector);
+    return Boolean(entry && isTiktokElementVisible(entry));
+  }));
   for (const sel of statSelectors) {
     const el = document.querySelector<HTMLElement>(sel);
     if (el && isTiktokElementVisible(el)) {
@@ -254,37 +260,62 @@ async function navigateToFollowList(handle: string): Promise<ScopeNavReport> {
 
 /**
  * Watch history has no stable desktop-web URL; it hangs off the avatar
- * dropdown menu (Settings → Activity center on current builds). We only
+ * or more menu when that account exposes a history entry. We only
  * click a positively identified "Watch history" entry — if neither the
  * menu nor the entry is found, the scope fails with an explicit reason
  * instead of fabricating an empty result.
  */
 async function navigateToWatchHistory(): Promise<ScopeNavReport> {
-  const report: ScopeNavReport = {
-    attempted: false,
-    note: "",
-    page_url: location.href,
+  const report: ScopeNavReport = { attempted: false, note: "", page_url: location.href };
+  const historyLabels = ["Watch history", "观看历史", "观看记录"];
+  const activityLabels = ["Activity center", "活动中心"];
+  const inSettings = (): boolean => new URL(location.href).pathname.replace(/\/$/, "") === "/setting";
+  const settingsEntry = (): HTMLElement | null => {
+    const entry = document.querySelector<HTMLElement>(
+      '[data-e2e="see-more-popup"] [data-e2e="settings-entrance"]',
+    );
+    return entry && isTiktokElementVisible(entry) ? entry : null;
   };
-  const avatar =
-    document.querySelector<HTMLElement>('[data-e2e="nav-profile"]') ??
-    document.querySelector<HTMLElement>('[data-e2e="profile-icon"]') ??
-    document.querySelector<HTMLElement>("header img");
-  if (!avatar) {
-    report.note = "history_menu_not_found";
-    return report;
+  if (!inSettings()) {
+    const menuEntry = (): HTMLElement | null => {
+      for (const selector of ['[data-e2e="profile-icon"]', '[data-e2e="nav-more-menu"]']) {
+        const element = document.querySelector<HTMLElement>(selector);
+        if (element && isTiktokElementVisible(element)) return element;
+      }
+      return null;
+    };
+    await waitForRenderedState(() => Boolean(menuEntry()));
+    const avatar = menuEntry();
+    if (!avatar) {
+      report.note = "history_menu_not_found";
+      return report;
+    }
+    // nav-profile is a profile link, not an account-menu trigger. The live
+    // Chinese more menu labels settings as 通用, so use its exact marker.
+    fireRealClick(avatar);
+    await waitForRenderedState(() => Boolean(settingsEntry() ||
+      findClickableByText([...historyLabels, ...activityLabels, "Settings", "设置"])));
   }
-  fireRealClick(avatar);
-  await sleep(1_000);
-  let entry = findClickableByText(["Watch history", "观看历史", "观看记录"]);
-  // Some desktop layouts nest history under Settings / Activity center.
-  // Only explicit read-only menu labels are eligible; no arbitrary URL jump.
-  for (const labels of [["Activity center", "活动中心"], ["Settings", "设置"], ["Activity center", "活动中心"]]) {
+  if (inSettings()) {
+    await waitForRenderedState(() => Boolean(findClickableByText([
+      ...historyLabels, ...activityLabels,
+    ])), 20_000);
+  }
+  let entry = findClickableByText(historyLabels);
+  for (const labels of [activityLabels, ["Settings", "设置"], activityLabels]) {
     if (entry) break;
-    const parent = findClickableByText(labels);
-    if (!parent) continue;
-    fireRealClick(parent);
-    await sleep(TAB_SETTLE_MS);
-    entry = findClickableByText(["Watch history", "观看历史", "观看记录"]);
+    const isSettingsStep = labels[0] === "Settings";
+    const parent = isSettingsStep
+      ? (inSettings() ? null : settingsEntry() ?? findClickableByText(labels))
+      : findClickableByText(labels);
+    if (parent) fireRealClick(parent);
+    if (parent) {
+      // Also applies on full-navigation replay: never reopen settings when
+      // already there, and wait for its content rather than clicking again.
+      await waitForRenderedState(() => Boolean(findClickableByText(historyLabels) ||
+        (isSettingsStep && findClickableByText(activityLabels))), 20_000);
+    }
+    entry = findClickableByText(historyLabels);
   }
   if (!entry) {
     report.note = "history_entry_not_found";
@@ -303,7 +334,7 @@ async function navigateToScope(
   scope: TiktokScope,
   handle: string,
 ): Promise<ScopeNavReport> {
-  if (resolveTiktokScopeRoot(document, scope) && (scope === "tt_history" || ownProfileVisible(handle))) {
+  if (resolveTiktokScopeRoot(document, scope, handle) && (scope === "tt_history" || ownProfileVisible(handle))) {
     return { attempted: true, note: "existing_scope", page_url: location.href };
   }
   if (scope === "tt_history") return navigateToWatchHistory();
@@ -355,7 +386,7 @@ async function runScope(msg: TiktokScopeExecuteMessage, record: ScopeExecutionRe
   let scrollRounds = 0;
 
   await waitForRenderedState(() =>
-    resolveAccessState() === "signed_in" && Boolean(resolveViewerHandle()));
+    resolveAccessState() === "signed_in" && Boolean(resolveViewerHandle()), 20_000);
   const accessState = resolveAccessState();
   let scopeRoot: HTMLElement | null = null;
   let viewerHandle = record.viewer_handle ?? "";
@@ -368,12 +399,12 @@ async function runScope(msg: TiktokScopeExecuteMessage, record: ScopeExecutionRe
     if (viewerSecUid) {
       const raw = document.getElementById(TIKTOK_UNIVERSAL_DATA_ELEMENT_ID)?.textContent ?? "";
       const current = readTiktokUniversalData(raw);
-      if (!current.loggedIn || current.viewer.secUid !== viewerSecUid) throw new Error("account_session_changed");
+      if (current.explicitLoggedOut || current.viewer.secUid !== viewerSecUid) throw new Error("account_session_changed");
     }
     if (msg.scope !== "tt_history" && !ownProfileVisible(viewerHandle)) {
       throw new Error("account_profile_changed");
     }
-    scopeRoot = resolveTiktokScopeRoot(document, msg.scope);
+    scopeRoot = resolveTiktokScopeRoot(document, msg.scope, viewerHandle);
     if (!scopeRoot) throw new Error("scope_root_not_proven");
     const rows = extractTiktokItemsFromDocument(
       scopeRoot,
@@ -392,7 +423,7 @@ async function runScope(msg: TiktokScopeExecuteMessage, record: ScopeExecutionRe
       const currentHandle = resolveViewerHandle();
       const raw = document.getElementById(TIKTOK_UNIVERSAL_DATA_ELEMENT_ID)?.textContent ?? "";
       const identity = readTiktokUniversalData(raw);
-      const currentSecUid = identity.loggedIn && identity.viewer.handle === currentHandle ? identity.viewer.secUid : "";
+      const currentSecUid = !identity.explicitLoggedOut && identity.viewer.handle === currentHandle ? identity.viewer.secUid : "";
       if (!currentHandle) throw new Error("viewer_identity_unknown");
       if ((record.viewer_handle && record.viewer_handle !== currentHandle) ||
           (record.viewer_sec_uid && record.viewer_sec_uid !== currentSecUid)) {
@@ -410,7 +441,8 @@ async function runScope(msg: TiktokScopeExecuteMessage, record: ScopeExecutionRe
     }
 
     if (!navigationFailed && accessState === "signed_in") {
-      await waitForRenderedState(() => Boolean(resolveTiktokScopeRoot(document, msg.scope)));
+      await waitForRenderedState(() => Boolean(resolveTiktokScopeRoot(document, msg.scope, viewerHandle)),
+        msg.scope === "tt_follow" ? 20_000 : 10_000);
       await harvestDom();
       const maxRounds = normalizeTiktokScrollRounds(msg.max_scroll_rounds);
       let stagnantRounds = 0;
