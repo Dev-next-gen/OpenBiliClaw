@@ -286,3 +286,13 @@ PYTHONPATH=src python scripts/smoke_tiktok_pipeline.py --config /path/to/config.
 公开 API：`enqueue_tiktok_bootstrap()` 签名及 HTTP task-result 协议不变，上述复用条件同时适用于手动初始化与 opt-in 增量。empty 仍不能替代真实行为事件生成画像。扩展 `resolveTiktokScopeRoot(doc, scope, expectedViewer?)` 增加可选 viewer，用于本人关注空弹窗边界；`readTiktokUniversalData()` 增加 `explicitLoggedOut`，身份字段本身不代表已登录。
 
 真实安装版的完整结论与失败记录见[验收台账](../platform-source-acceptance.tiktok.md)。本轮未改变跨模块接线、配置字段、CLI 或安装流程。
+
+## 2026-10-12 慢加载与列表交接续修
+
+| 已实现能力 | 限制 |
+| --- | --- |
+| 慢加载列表识别 | 已证明身份和选中 tab 后延长 scope root 等待；空列表仍需专属显式空态。 |
+| 连续 scope 交接 | content 在持久化结果后释放采集锁，不让后台 ACK 等待吞掉下一 scope；不改变串行采集、身份或范围校验。 |
+| 原生保存登录判定 | 未出现控件不立即当作登出；共享正向登录证据且明确登出优先，保存和只读确认均使用 20 秒预算。 |
+
+后端公共 API、配置、来源矩阵未改变。实机诊断观察到文档 complete 后登录控件仍需超过 12 秒；当前账号设置页未暴露历史入口，返回 `history_entry_not_found`，不能声明空历史或全能力通过。非空画像、周期增量与站内收藏仍以[真实验收台账](../platform-source-acceptance.tiktok.md)为准。

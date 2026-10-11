@@ -442,7 +442,7 @@ async function runScope(msg: TiktokScopeExecuteMessage, record: ScopeExecutionRe
 
     if (!navigationFailed && accessState === "signed_in") {
       await waitForRenderedState(() => Boolean(resolveTiktokScopeRoot(document, msg.scope, viewerHandle)),
-        msg.scope === "tt_follow" ? 20_000 : 10_000);
+        msg.scope === "tt_follow" ? 20_000 : 60_000);
       await harvestDom();
       const maxRounds = normalizeTiktokScrollRounds(msg.max_scroll_rounds);
       let stagnantRounds = 0;
@@ -587,6 +587,7 @@ export async function executeTiktokScopeOnce(data: TiktokScopeExecuteMessage): P
     const previous = await readScopeRecord();
     const matches = previous?.message.task_id === data.task_id && previous.message.scope === data.scope;
     if (matches && previous.result) {
+      activeScopeKey = null;
       await deliverScopeResult(previous.result);
       return;
     }
@@ -599,17 +600,22 @@ export async function executeTiktokScopeOnce(data: TiktokScopeExecuteMessage): P
     record.result = result;
     await persistScopeRecord(record);
     try { sessionStorage.removeItem(SCOPE_POINTER_KEY); } catch { /* Result replay remains read-only. */ }
+    // Collection is durably finished. The dispatcher may start the next scope
+    // before replying to this result (including same-document navigation).
+    // Holding the collection lock during that ACK silently drops the handoff.
+    activeScopeKey = null;
     await deliverScopeResult(result);
   } catch (error) {
     // Failure to persist the resume record must stop before any navigation.
     // The background dispatcher still owns durable reporting of this failure.
     const items = record?.accepted_items ?? [];
+    activeScopeKey = null;
     await deliverScopeResult({ task_id: data.task_id, scope: data.scope,
       items, scope_count: items.length, status: items.length ? "degraded" : "failed",
       ...(record?.viewer_handle ? { viewer_handle: record.viewer_handle } : {}),
       ...(record?.viewer_sec_uid ? { viewer_sec_uid: record.viewer_sec_uid } : {}),
       error: `scope_persistence_failed: ${String(error)}` });
-  } finally { activeScopeKey = null; }
+  } finally { if (activeScopeKey === key) activeScopeKey = null; }
 }
 
 async function resumeTiktokScopeAfterNavigation(): Promise<void> {

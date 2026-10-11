@@ -903,3 +903,13 @@ TikTok 每 scope 的基础预算由 30 秒调整为 60 秒，覆盖新增渲染�
 | 内容脚本投递 | 文档 complete/12 秒兜底之后，如果 receiver 尚未注册，以同一 scope 最多重试 20 秒；scope/任务切换或清理后停止，重试不延长任务 deadline，不重放站内写操作。 |
 
 公开 API：`readTiktokUniversalData` 新增显式登出字段，`resolveTiktokScopeRoot` 可传预期 viewer；`TIKTOK_SCOPE_EXECUTE` 和 task-result wire 不变。Chrome/Firefox 构建只能证明可打包，不能替代已安装 Chrome 的账号链路验收；实时结果见[台账](../platform-source-acceptance.tiktok.md)。
+
+### TikTok 慢加载和列表交接修复（2026-10-12）
+
+| 已实现行为 | 验证边界 |
+| --- | --- |
+| 列表内容晚于标签挂载 | 喜欢/收藏/历史 scope root 最多等待 60 秒，关注仍 20 秒；没有已证明的容器仍失败，不扩大到整页采集。dispatcher 的 idle/absolute deadline 仍优先。 |
+| scope 结果与下一 scope 交接 | 结果持久化后、等待后台 ACK 前释放采集锁；旧回调清理只能释放自己的锁和存储记录。同一文档在上一结果 ACK 前收到下一列表任务不再被忽略。 |
+| 原生收藏登录 hydration | 复用 TikTok 正向登录证据，明确登录墙或显式 logout 可提前终止；尚未挂载登录控件时继续等待，匿名上传按钮不能证明登录。 |
+
+公共 API：`waitForNativeSaveReadiness(ready, sleep, timeoutMs=10_000)` 新增可选等待预算（夹紧到 250–30,000ms，轮数和墙钟双重有界）；其他来源默认不变，TikTok save/verify 使用 20 秒。`TiktokNativeSaveEnvironment.isLoginRequired?()` 区分明确未登录和正在加载；wire、权限与配置均不变。真实验收状态见[台账](../platform-source-acceptance.tiktok.md)。

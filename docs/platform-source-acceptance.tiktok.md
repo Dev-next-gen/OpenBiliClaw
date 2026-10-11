@@ -1,5 +1,30 @@
 # TikTok 来源验收报告
 
+## 2026-10-12 慢加载与连续列表交接修复
+
+范围 `capability-increment`，基线 `0077f7f8`，独立 repair worktree；结论 **incremental only**。本轮正式构建的三 scope 空列表连续采集通过，但不能据此声明非空画像、历史和原生收藏已验收。脱敏记录见 [real-e2e.json](testing/assets/2026-10-12-tiktok-readiness/real-e2e.json)。
+
+修复与直接证据：
+
+- 实机诊断里文档 complete 后登录证据仍晚到超过 12 秒。原生保存原先把“还没有登录控件”立即当作未登录；现在区分明确登录墙/登出与未就绪，save/verify 等待登录和内容同时就绪，最多 20 秒。匿名 upload 按钮不再是登录证明。共享 helper 默认仍 10 秒，并增加墙钟上限。
+- 本人资料和收藏 tab 已正确选中时，内容区域仍可能未挂载。已证明身份/范围后将 scope root 等待增至 60 秒（关注仍 20 秒），不把空白或未知容器当作 empty；task idle/absolute 上限保持优先。
+- 连续任务仍超时后，回归复现了 content 持锁等结果 ACK 时忽略下一 scope 的竞态。现在结果持久化后先释放采集锁，旧完成回调不能释放新 scope 的锁；同文档交接回归先红后绿，随后正式安装包的三 scope 连续实测通过。不能据此断言此前每次超时都来自同一原因。
+
+| 实际链路 | 结果 | 证据与限制 |
+| --- | --- | --- |
+| 后端/安装来源 | PASS | 正常 create_app/Uvicorn 8420 + 注册 Chrome 扩展，隔离配置/数据/SQLite，模型与 network 配置对象保持一致。构建和 22 assets 通过后部署，复制前后摘要一致、热重载已送达。 |
+| 连续喜欢/收藏/关注 | PASS（正式构建空态） | 任务 `fe047cac-a661-46ac-90b5-4e57cf7153b8` completed，三 scope 均 empty/complete，真实接受行数 0；正式包摘要 `50a556ae4bde6043778a40fed66193e1d23255fdd5347fe3b148095c175c5d23`。不是非空采集证明。 |
+| 历史入口 | FAIL | 诊断构建确认当前账号 `/setting` 保有 viewer，但设置项没有观看历史/活动中心入口，返回 history_entry_not_found；不伪造空历史，不改为 N/A。 |
+| 正式初始化 | FAIL | POST /api/init HTTP 202，新建 profile_update=true 四 scope 任务；收藏/关注 empty，喜欢仍出现 scope_root_not_proven，历史 history_entry_not_found。终态 empty_signals / initialized=false，无画像；没有复用只读三 scope smoke，正式连续成功一次不代表重复执行稳定。 |
+| 周期增量 | BLOCKED | 没有该账号本轮初始画像/非空事件，全局和来源周期开关保持关闭。 |
+| 原生收藏写入 | BLOCKED | 用户已一般性允许；自动审批要求明确确认助手提出的那条具体视频，确切目标问题仍待回复。拒绝发生在工具执行前，没有写入上游收藏或本地测试 membership。 |
+
+正式初始化失败后追加三次只读诊断：第一次 idle timeout，后两次分别两 scope、三 scope 均 empty/complete。记录显示收藏选中后内容还可晚到约 12 秒；未稳定复现正式初始化的喜欢页失败，不把诊断成功追认成正式初始化成功。
+
+自动化验证：原生冷加载与慢列表回归先出现 3 项失败；同文档 scope 交接新增 1 项失败，修复后针对性 **31 passed**；扩展全量 **1799 passed / 0 failed**；相关后端 `test_tiktok_tasks` / `test_tiktok_guided_init` / `test_tiktok_readiness` / `test_source_incremental_sync` **107 passed**；文档索引 **5 passed**。Chrome/Firefox build + 22 assets 均通过，Firefox 未做安装版真测。扩展全量测试首次受沙箱禁止监听 localhost 阻断，获得本机端口权限后全量通过。注册审计 PASS 46 / MANUAL 14 / N/A 2 / MISSING 0，只证明登记完整。本轮 Python 实现未改动，没有把上一轮全量 pytest 的两个失败记作本轮全绿。
+
+本轮结束保留已验证的正式包（上述 50a556… 摘要）在 Chrome 注册目录；临时诊断未留在源码或安装包。原静态安装包另存本机私有回退压缩包；隔离后端已停止，临时配置/Cookie/数据库/原始诊断/日志和依赖软链已删除。用户主数据、上游收藏及周期同步开关未写入。未合并、未发布。
+
 ## 2026-10-11 重新加载后的账号页面续修
 
 范围 `capability-increment`，基线 `1df4e59f`，独立 repair worktree；结论仍为 **incremental only**。本节更新上一次“需手动重新加载”的运行状态，不把局部诊断成功升级为 full 验收通过。脱敏记录见 [real-e2e.json](testing/assets/2026-10-11-tiktok-account-resume/real-e2e.json)。

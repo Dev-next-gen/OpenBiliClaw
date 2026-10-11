@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createTiktokBrowserEnvironment,
   saveTiktok,
   tiktokRouteVideoId,
   verifyTiktok,
@@ -224,4 +225,43 @@ test("saveTiktok never confirms another SPA video's selected control", async () 
     },
   }];
   assert.notEqual((await saveTiktok(task, env) as { status: string }).status, "synced");
+});
+
+for (const operation of [saveTiktok, verifyTiktok]) {
+  test(`${operation.name} waits for cold-page login and content hydration`, async () => {
+    const env = fixture({ initialSelected: operation === verifyTiktok });
+    env.isLoggedIn = () => env.sleeps >= 48;
+    env.isContentReady = () => env.sleeps >= 52;
+    assert.deepEqual(await operation(task, env), {
+      status: operation === saveTiktok ? "synced" : "already_synced",
+    });
+    assert.ok(env.sleeps >= 52);
+    assert.equal(env.clicks, operation === saveTiktok ? 1 : 0);
+  });
+}
+
+
+test("explicit login wall terminates without waiting or clicking", async () => {
+  const env = fixture({ loggedIn: false });
+  env.isLoginRequired = () => true;
+  assert.deepEqual(await saveTiktok(task, env), { status: "login_required" });
+  assert.equal(env.sleeps, 0);
+  assert.equal(env.clicks, 0);
+});
+
+test("native DOM auth rejects upload-only and explicit logout while accepting canonical login", () => {
+  for (const [marker, flag, expected] of [
+    ["upload-icon", undefined, false], ["nav-profile", undefined, true],
+    ["nav-profile", false, false], ["", true, true], ["top-login-button", true, false],
+  ] as const) {
+    const element = { hidden: false, parentElement: null, style: {}, hasAttribute: () => false, getAttribute: () => null };
+    const doc = {
+      body: { innerText: "" },
+      querySelector: (selector: string) => marker && selector === `[data-e2e="${marker}"]` ? element : null,
+      getElementById: () => ({ textContent: JSON.stringify({ __DEFAULT_SCOPE__: { "webapp.user-context": { isLoggedIn: flag } } }) }),
+    } as unknown as Document;
+    const env = createTiktokBrowserEnvironment(doc, task.content_url);
+    assert.equal(env.isLoggedIn(), expected, `${marker}/${flag}`);
+    assert.equal(env.isLoginRequired!(), flag === false || marker === "top-login-button");
+  }
 });

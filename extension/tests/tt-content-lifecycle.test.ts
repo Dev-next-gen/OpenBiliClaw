@@ -21,7 +21,7 @@ class ElementFixture {
   dispatchEvent() { this.clicks++; if ("aria-selected" in this.attrs) this.attrs["aria-selected"] = "true"; return true; }
 }
 
-function environment(options: { route?: string; appContextIdentity?: boolean; navAbsent?: boolean; positiveMarker?: boolean; explicitLogout?: boolean; conflictingNav?: boolean; historyMenuAfterTicks?: number; scopeRoot?: boolean; scrollFails?: boolean; storageFails?: boolean; switchViewer?: boolean; switchSecUid?: boolean; readyAfterTicks?: number; profileTitleAfterTicks?: number; displayNameTitle?: boolean; tabAfterTicks?: number; panelAfterTicks?: number } = {}) {
+function environment(options: { onResult?: (result: TiktokScopeResult) => Promise<void>; route?: string; appContextIdentity?: boolean; navAbsent?: boolean; positiveMarker?: boolean; explicitLogout?: boolean; conflictingNav?: boolean; historyMenuAfterTicks?: number; scopeRoot?: boolean; scrollFails?: boolean; storageFails?: boolean; switchViewer?: boolean; switchSecUid?: boolean; readyAfterTicks?: number; profileTitleAfterTicks?: number; displayNameTitle?: boolean; tabAfterTicks?: number; panelAfterTicks?: number } = {}) {
   let ticks = 0;
   const saved: Record<string, PropertyDescriptor | undefined> = {};
   const values: Record<string, unknown> = {};
@@ -58,12 +58,12 @@ function environment(options: { route?: string; appContextIdentity?: boolean; na
       }
       if (selector === '[data-e2e="user-title"]') return ticks < (options.profileTitleAfterTicks ?? 0) ? null : title;
       if (selector === '[data-e2e="user-subtitle"]') return options.displayNameTitle ? subtitle : null;
-      if (selector === '[data-e2e="liked-tab"]') return ticks < (options.tabAfterTicks ?? 0) ? null : tab;
+      if (selector === '[data-e2e="liked-tab"]' || selector === '[data-e2e="favorites-tab"]') return ticks < (options.tabAfterTicks ?? 0) ? null : tab;
       return null;
     },
     querySelectorAll(selector: string) {
       if (selector.includes('[role="menuitem"]') && moreMenu.clicks > 0) return [historyEntry];
-      if (selector === '[data-e2e="liked-tab"]') return ticks < (options.tabAfterTicks ?? 0) ? [] : [tab];
+      if (selector === '[data-e2e="liked-tab"]' || selector === '[data-e2e="favorites-tab"]') return ticks < (options.tabAfterTicks ?? 0) ? [] : [tab];
       return [];
     },
   };
@@ -87,7 +87,7 @@ function environment(options: { route?: string; appContextIdentity?: boolean; na
         },
         remove: async (key: string) => { delete values[key]; },
       } },
-      runtime: { onMessage: { addListener() {} }, sendMessage: async (message: { data: TiktokScopeResult }) => { results.push(message.data); } },
+      runtime: { onMessage: { addListener() {} }, sendMessage: async (message: { data: TiktokScopeResult }) => { results.push(message.data); await options.onResult?.(message.data); } },
     },
     setTimeout: ((callback: (...args: unknown[]) => void) => originalTimer(() => { ticks++; callback(); }, 0)),
   };
@@ -253,4 +253,28 @@ test("app-context identity survives missing nav only with positive login and no 
       else assert.equal(env.results[0]?.status, "failed");
     } finally { env.restore(); }
   }
+});
+
+test("scope content can mount after the selected profile tab without becoming a false failure", async () => {
+  const env = environment({ panelAfterTicks: 60 });
+  try {
+    await executeTiktokScopeOnce(message("late-profile-content"));
+    assert.equal(env.results[0]?.items.length, 1);
+    assert.equal(env.results[0]?.status, "degraded");
+  } finally { env.restore(); }
+});
+
+
+test("next scope arriving before prior result ACK is collected in the same document", async () => {
+  const env = environment({ onResult: async (result) => {
+    if (result.scope === "tt_like") {
+      await executeTiktokScopeOnce({ ...message("handoff-before-ack"), scope: "tt_collect" });
+    }
+  } });
+  try {
+    await executeTiktokScopeOnce(message("handoff-before-ack"));
+    assert.deepEqual(env.results.map(result => result.scope), ["tt_like", "tt_collect"]);
+    assert.deepEqual(env.results.map(result => result.items.length), [1, 1]);
+    assert.equal((env.values[recordKey] as { message: TiktokScopeExecuteMessage }).message.scope, "tt_collect");
+  } finally { env.restore(); }
 });

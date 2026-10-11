@@ -199,3 +199,12 @@ adapter 的授权链路，不扩大其它平台边界。
 ## TikTok 精确视频确认（2026-10-11）
 
 TikTok executor 在内容等待结束、点击前与确认循环内重新读取当前 URL。SPA 切换到其他视频时停止，不点击其按钮，也不把该页选中态报告为成功；verify 始终只读。真实站内保存仍需已安装登录态扩展及 exact platform/action/content_id/target 授权，当前未执行。见 [验收台账](../platform-source-acceptance.tiktok.md)。
+
+## TikTok 登录渲染等待（2026-10-12）
+
+| 已实现行为 | 验证边界 |
+| --- | --- |
+| 冷页面等待登录和内容同时就绪 | save/verify 不再因登录控件尚未挂载而立即返回 login_required；两者最多等待 20 秒，显式登录墙/登出仍停止。 |
+| 共享正向账号证据 | 使用账号采集的 DOM 与 canonical SSR 判定；仅有匿名 upload 控件不证明登录，明确 logout 优先。 |
+
+公共扩展接口 `TiktokNativeSaveEnvironment` 新增可选 `isLoginRequired()`；共享等待函数新增可选 timeoutMs，其他来源仍默认 10 秒。精确 URL、点击前复核和只读 persisted-state 确认保持。此修复有冷加载及否定案例回归，不能替代授权站内写入实测；详见[验收台账](../platform-source-acceptance.tiktok.md)。

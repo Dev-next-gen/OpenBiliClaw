@@ -16,6 +16,8 @@
 
 import type { NativeSaveTask } from "../../shared/native-save.ts";
 import { waitForNativeSaveReadiness } from "./readiness.ts";
+import { detectTiktokAccessState } from "../tt/dom-extractor.ts";
+import { readTiktokUniversalData, TIKTOK_UNIVERSAL_DATA_ELEMENT_ID } from "../tt/bootstrap.ts";
 
 export interface TiktokSaveControl {
   isSelected(): boolean;
@@ -25,6 +27,8 @@ export interface TiktokSaveControl {
 export interface TiktokNativeSaveEnvironment {
   currentUrl: string;
   isLoggedIn(): boolean;
+  /** Explicit login wall/logout evidence, distinct from controls still loading. */
+  isLoginRequired?(): boolean;
   isUnavailable(): boolean;
   isContentReady(): boolean;
   rateLimitFingerprint(): string;
@@ -102,10 +106,14 @@ export async function saveTiktok(
   }
   if (!hasTargetContract(task)) return { status: "failed", error_code: "native_save_failed" };
   const contentReady = await waitForNativeSaveReadiness(
-    () => !env.isLoggedIn() || env.isUnavailable() || env.isContentReady(),
+    () => Boolean(env.isLoginRequired?.()) || env.isUnavailable() ||
+      (env.isLoggedIn() && env.isContentReady()),
     env.sleep,
+    20_000,
   );
-  if (!contentReady) return { status: "failed", error_code: "native_content_not_ready" };
+  if (!contentReady) return env.isLoggedIn()
+    ? { status: "failed", error_code: "native_content_not_ready" }
+    : { status: "login_required" };
   // Login evidence must be a positive signed-in marker observed in the
   // page (avatar/nav profile), never cookie presence (contract [auth]).
   if (!env.isLoggedIn()) return { status: "login_required" };
@@ -140,10 +148,14 @@ export async function verifyTiktok(
   }
   if (!hasTargetContract(task)) return { status: "failed", error_code: "native_save_failed" };
   const contentReady = await waitForNativeSaveReadiness(
-    () => !env.isLoggedIn() || env.isUnavailable() || env.isContentReady(),
+    () => Boolean(env.isLoginRequired?.()) || env.isUnavailable() ||
+      (env.isLoggedIn() && env.isContentReady()),
     env.sleep,
+    20_000,
   );
-  if (!contentReady) return { status: "failed", error_code: "native_content_not_ready" };
+  if (!contentReady) return env.isLoggedIn()
+    ? { status: "failed", error_code: "native_content_not_ready" }
+    : { status: "login_required" };
   if (!env.isLoggedIn()) return { status: "login_required" };
   if (env.isUnavailable()) return { status: "unsupported", error_code: "unsupported_content_type" };
   if (!env.isContentReady()) return { status: "failed", error_code: "native_content_not_ready" };
@@ -169,19 +181,6 @@ const FAVORITE_CONTROL_SELECTOR = [
   "[role='button'][aria-label*='Favorite']",
   "button[aria-label*='收藏']",
   "[role='button'][aria-label*='收藏']",
-].join(", ");
-
-const SIGNED_IN_SELECTOR = [
-  "[data-e2e='nav-profile']",
-  "[data-e2e='profile-icon']",
-  "[data-e2e='upload-icon']",
-  "[data-e2e='nav-inbox']",
-].join(", ");
-
-const LOGIN_WALL_SELECTOR = [
-  "[data-e2e='top-login-button']",
-  "[data-e2e='login-modal']",
-  "[role='dialog'] form[action*='login']",
 ].join(", ");
 
 const UNAVAILABLE_SELECTOR = [
@@ -244,15 +243,16 @@ export function createTiktokBrowserEnvironment(
   return {
     get currentUrl() { return readUrl(); },
     isLoggedIn() {
-      // Fail closed: a positive signed-in marker is required AND no login
-      // wall may be visible. Absence of both means logged out.
-      const marker = Array.from(root.querySelectorAll<HTMLElement>(SIGNED_IN_SELECTOR)).some(
-        (element) => isEffectivelyVisible(element, root),
+      const state = detectTiktokAccessState(root, readUrl());
+      const identity = readTiktokUniversalData(
+        root.getElementById(TIKTOK_UNIVERSAL_DATA_ELEMENT_ID)?.textContent ?? "",
       );
-      if (!marker) return false;
-      return !Array.from(root.querySelectorAll<HTMLElement>(LOGIN_WALL_SELECTOR)).some(
-        (element) => isEffectivelyVisible(element, root),
-      );
+      return state !== "login_wall" && !identity.explicitLoggedOut &&
+        (state === "signed_in" || identity.loggedIn);
+    },
+    isLoginRequired() {
+      return detectTiktokAccessState(root, readUrl()) === "login_wall" ||
+        readTiktokUniversalData(root.getElementById(TIKTOK_UNIVERSAL_DATA_ELEMENT_ID)?.textContent ?? "").explicitLoggedOut;
     },
     isUnavailable() {
       return Array.from(root.querySelectorAll<HTMLElement>(UNAVAILABLE_SELECTOR)).some(
