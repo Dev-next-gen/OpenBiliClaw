@@ -25,7 +25,7 @@ route_aliases = []
 fallback_owner = "external-cli"
 requires_overseas_network = true
 routed_by_network_mode = true
-network_policy = "Signed curl_cffi and yt-dlp follow shared outbound network routing for discovery. Account tasks and native save use the user's signed-in browser network stack; the backend never replays TikTok credentials."
+network_policy = "Signed curl_cffi and yt-dlp follow shared outbound network routing for discovery. Account tasks and native save use the user's signed-in browser network stack; the backend does not replay credentials for account tasks or native save."
 
 [transport.capability_routes]
 discover = "backend:signed-web-api:guest-or-cookie"
@@ -39,7 +39,7 @@ cookie-sync = "extension:unified-credential:passport-probe"
 item_id = "TikTok numeric video id; item_key=tiktok:<id>"
 url = "https://www.tiktok.com/@<handle>/video/<id>"
 dedupe = "Canonical tiktok family plus video id; personal event keys are additionally partitioned by interaction scope"
-account_scope = "Account behavior events are accepted only from extension tasks running in the session verified by the passport heartbeat; unknown or logged-out tabs fail closed"
+account_scope = "Account behavior tasks require a positively observed signed-in viewer in the owned browser tab and a backend profile-account fence; these claims are observed, not passport-verified account identity; unknown or logged-out tabs fail closed"
 
 [auth]
 mode = "capability-specific"

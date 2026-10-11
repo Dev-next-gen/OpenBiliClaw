@@ -8,6 +8,8 @@
 
 - TikTok 验收全量回归补修：旧身份去重测试用运行时的新鲜发布日期验证时效证据成组保留，避免固定 2026-08-11 日期随时间过期导致失败；生产时效判断不变。
 
+- TikTok 契约澄清：passport 心跳用于发现凭据验证；账号任务依据浏览器 observed viewer 与后端账号边界，不将观察身份标成上游 verified。
+
 ### 新增：TikTok full 升级收尾——契约测试反转与 audit 清零（2026-10-11）
 
 - `tests/test_tiktok_contract.py` 由「断言排除成立」整体改写为正向注册断言：`_PLATFORM_SOURCE_FIELDS` / 双 manifest content_scripts / `source_incremental_sync` 注册、native-save 不再是 local-only、guidedInit=true、dispatcher 任务标记与两阶段结果重投；契约登记的排除测试 `test_tiktok_engagement_danmaku_is_unavailable`（新建）与 `test_tiktok_media_deep_link_uses_https`（保留）精确存在并通过；移动端凭据排除保持正向「排除仍成立」。
