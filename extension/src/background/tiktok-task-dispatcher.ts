@@ -279,9 +279,11 @@ export interface TiktokTaskResultTransport {
 export interface TiktokTaskResultRetryOptions {
   maxAttempts?: number;
   baseDelayMs?: number;
+  requestTimeoutMs?: number;
 }
 
 const TASK_RESULT_MAX_ATTEMPTS = 3;
+const TASK_RESULT_REQUEST_TIMEOUT_MS = 10_000;
 const TASK_RESULT_RETRY_BASE_DELAY_MS = 250;
 const TASK_RESULT_RETRY_MAX_DELAY_MS = 2_000;
 
@@ -381,6 +383,40 @@ async function drainPendingQueue(
   }
 }
 
+/** Bound URL resolution and POST so a stalled request cannot hold the FIFO forever. */
+async function postResultAttempt(
+  body: string,
+  transport: TiktokTaskResultTransport,
+  requestedTimeout?: number,
+): Promise<TiktokTaskResultResponse> {
+  const timeoutMs = typeof requestedTimeout === "number" && Number.isFinite(requestedTimeout)
+    ? Math.max(1, Math.min(TASK_RESULT_REQUEST_TIMEOUT_MS, requestedTimeout))
+    : TASK_RESULT_REQUEST_TIMEOUT_MS;
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      (async () => {
+        const url = await transport.resolveUrl("/sources/tiktok/task-result");
+        // A late resolver must not start another POST after this attempt ended.
+        if (controller.signal.aborted) throw new Error("task_result_request_timeout");
+        return transport.fetch(url, {
+          method: "POST", headers: { "content-type": "application/json" }, body,
+          signal: controller.signal,
+        });
+      })(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error("task_result_request_timeout"));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 async function postRawTaskResult(
   body: string,
   transport: TiktokTaskResultTransport,
@@ -401,14 +437,7 @@ async function postRawTaskResult(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const response = await transport.fetch(
-        await transport.resolveUrl("/sources/tiktok/task-result"),
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body,
-        },
-      );
+      const response = await postResultAttempt(body, transport, options.requestTimeoutMs);
       if (response.ok) return "acked";
       if (response.status === 409 || response.status === 422) {
         // Explicit terminal rejection — the backend refused this exact

@@ -108,14 +108,18 @@ test("tiktok task native_save union closes through the exact authenticated resul
   });
   assert.deepEqual(calls, [[nativeTask, "tiktok"], result]);
 
-  const requests: unknown[] = [];
+  const requests: Array<[string, RequestInit]> = [];
   const state = installChromeMock();
   try {
   await postTiktokNativeSaveResult(result, {
     resolveUrl: async (path) => `http://127.0.0.1:8420/api${path}`,
     fetch: async (input, init) => { requests.push([input, init]); return { ok: true, status: 200 }; },
   });
-  assert.deepEqual(requests, [[
+  assert.ok(requests[0]?.[1].signal instanceof AbortSignal);
+  assert.deepEqual(requests.map(([url, init]) => {
+    const { signal: _signal, ...rest } = init;
+    return [url, rest];
+  }), [[
     "http://127.0.0.1:8420/api/sources/tiktok/task-result",
     {
       method: "POST",
@@ -541,5 +545,46 @@ test("storage failure prevents POST and retains the prior pending result", async
     }), /storage unavailable/);
     assert.equal(posts, 0);
     assert.equal(state.sessionStorage[TIKTOK_PENDING_RESULT_LOCAL_KEY], prior);
+  } finally { resetTiktokTaskStateForTest(); state.restore(); }
+});
+
+
+test("a stalled POST aborts without losing its body or wedging subsequent replay", async () => {
+  const state = installChromeMock();
+  const result = { task_id: "stalled", status: "failed" as const };
+  let signal: AbortSignal | null | undefined;
+  try {
+    await assert.rejects(postTiktokTaskResult(result, {
+      resolveUrl: async () => "http://127.0.0.1:8420/api/sources/tiktok/task-result",
+      fetch: async (_url, init) => { signal = init.signal; return new Promise(() => {}); },
+      sleep: async () => {},
+    }, { maxAttempts: 1, requestTimeoutMs: 5 }), /task_result_request_timeout/);
+    assert.equal(signal?.aborted, true);
+    assert.equal((state.sessionStorage[TIKTOK_PENDING_RESULT_LOCAL_KEY] as { body: string }).body, JSON.stringify(result));
+    const posted: string[] = [];
+    await flushPendingTiktokTaskResult({
+      resolveUrl: async () => "url",
+      fetch: async (_url, init) => { posted.push(String(init.body)); return { ok: true, status: 200 }; },
+      sleep: async () => {},
+    });
+    assert.deepEqual(posted, [JSON.stringify(result)]);
+    assert.equal(state.sessionStorage[TIKTOK_PENDING_RESULT_LOCAL_KEY], undefined);
+  } finally { resetTiktokTaskStateForTest(); state.restore(); }
+});
+
+test("URL resolution completing after its deadline cannot send a late callback", async () => {
+  const state = installChromeMock();
+  let resolveUrl!: (url: string) => void;
+  let posts = 0;
+  try {
+    await assert.rejects(postTiktokTaskResult({ task_id: "late-url", status: "failed" }, {
+      resolveUrl: () => new Promise(resolve => { resolveUrl = resolve; }),
+      fetch: async () => { posts++; return { ok: true, status: 200 }; },
+      sleep: async () => {},
+    }, { maxAttempts: 1, requestTimeoutMs: 5 }), /task_result_request_timeout/);
+    resolveUrl("url");
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(posts, 0);
+    assert.ok(state.sessionStorage[TIKTOK_PENDING_RESULT_LOCAL_KEY]);
   } finally { resetTiktokTaskStateForTest(); state.restore(); }
 });

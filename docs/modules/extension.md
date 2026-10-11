@@ -884,3 +884,10 @@ TikTok 内容脚本的 `detectTiktokAccessState` 仅以页面可见文字作为�
 TikTok 每 scope 的基础预算由 30 秒调整为 60 秒，覆盖新增渲染等待和整页恢复；滚动预算公式、360 秒绝对上限与 120 秒 idle 限制保持。
 
 范围切换后先有界等待 `resolveTiktokScopeRoot` 成功，再进入收集器；未确认范围的容器不回退为整页扫描。
+
+
+### TikTok 分阶段渲染与回传有界等待（2026-10-11）
+
+- 本人标题出现后，喜欢/收藏标签仍可能尚未挂载；`navigateToProfileTab` 单独等待目标可见入口（最多 10 秒），然后点击并等待已证明的 scope root。实机已从提前 `scope_tab_not_found` 推进到 `liked-tab[aria-selected=true]`；列表识别尚未通过，不扩大为整页抓取。
+- 公共 API `TiktokTaskResultRetryOptions.requestTimeoutMs` 为结果回传单次尝试的可选上限，默认且最大 10 秒，覆盖 URL 解析与 POST。超时中止请求并释放串行等待，原 canonical body 留在 durable FIFO；迟到的 URL 解析不再发送 POST。回调重试不会重做上游收藏动作。
+- 已用永不完成的 POST 和迟到 URL 解析验证：失败可退出，原结果不丢失，恢复后按原 body 重放。该回归不冒充真实断连原因；本轮后续浏览器断连来自临时诊断包构建失败。

@@ -184,6 +184,12 @@ async function navigateToProfileTab(
     report.note = "profile_entry_not_found";
     return report;
   }
+  // Profile headings hydrate before the tab strip. Wait for the actual scope
+  // entry; a rendered heading alone does not mean navigation is ready.
+  await waitForRenderedState(() => TIKTOK_SCOPE_TAB_SELECTORS[scope].some((selector) => {
+    const tab = document.querySelector<HTMLElement>(selector);
+    return Boolean(tab && isTiktokElementVisible(tab));
+  }) || Boolean(findClickableByText(SCOPE_TAB_LABELS[scope])));
   for (const sel of TIKTOK_SCOPE_TAB_SELECTORS[scope]) {
     const el = document.querySelector<HTMLElement>(sel);
     if (el && isTiktokElementVisible(el)) {

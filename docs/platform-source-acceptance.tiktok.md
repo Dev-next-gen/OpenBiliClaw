@@ -1,5 +1,16 @@
 # TikTok 来源验收报告
 
+## 2026-10-11 账号入口续修
+
+范围 `capability-increment`，基线 `618843fb`，原修复 worktree 开始干净。结论 **incremental only**：本轮修复两处可复现缺陷，尚不能把下方账号 FAIL/BLOCKED 改为 PASS。
+
+- 实际 Chrome 的本人标题先于标签挂载；修复独立等待喜欢/收藏入口。真实测试从 `scope_tab_not_found` 推进到本人 URL + 精确身份副标题 + `liked-tab[aria-selected=true]`，随后仍报 `scope_root_not_proven`，接受行数 0。具体 [脱敏证据](testing/assets/2026-10-11-tiktok-account-repair/real-e2e.json)。
+- 结果回传的单次请求原来没有超时；补默认/最大 10 秒 deadline、AbortSignal 与迟到 URL 守卫，保持持久 FIFO/原 body 重放。该缺陷由挂起 transport 回归证明，不声称是上一轮实机停顿的唯一原因。
+- 后续诊断 TypeScript 构建失败，但临时部署脚本未停在失败处，导致扩展连接断开；完整有效产物已重建；结束前按 SHA-256 校验恢复原 manifest/dist/icons/popup，取消本次待领取任务。扩展 WebSocket 仍未连接，需在 Chrome 扩展页手动重新加载一次。属于本次测试控制器错误，不归因于 Intel CPU、用户登录或 TikTok。账号列表、画像初始化、周期增量与站内收藏仍需继续实测，未执行上游写操作。
+
+
+验证：扩展全量 **1783 passed**；后端相关 **312 passed / 37 skipped**；文档索引 **5 passed**；Chrome/Firefox build + 22 assets、Ruff、MyPy（318 文件）通过。source audit 为注册检查，不能替代账号真测。隔离 smoke 未生成画像，真实配置/数据未被测试写入。
+
 ## 2026-10-11 真实请求续验（PR #286）
 
 本轮结论仍为 **incremental only**：公开发现的真实推荐链路通过；账号采集实际运行后仍失败，不能用单元测试或 Cookie 校验替代四项账号能力验收。脱敏证据见 [real-e2e.json](testing/assets/2026-10-11-tiktok-full-live/real-e2e.json)。

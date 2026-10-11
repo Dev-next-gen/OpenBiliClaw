@@ -21,7 +21,7 @@ class ElementFixture {
   dispatchEvent() { this.clicks++; if ("aria-selected" in this.attrs) this.attrs["aria-selected"] = "true"; return true; }
 }
 
-function environment(options: { route?: string; scopeRoot?: boolean; scrollFails?: boolean; storageFails?: boolean; switchViewer?: boolean; switchSecUid?: boolean; readyAfterTicks?: number; profileTitleAfterTicks?: number; displayNameTitle?: boolean; panelAfterTicks?: number } = {}) {
+function environment(options: { route?: string; scopeRoot?: boolean; scrollFails?: boolean; storageFails?: boolean; switchViewer?: boolean; switchSecUid?: boolean; readyAfterTicks?: number; profileTitleAfterTicks?: number; displayNameTitle?: boolean; tabAfterTicks?: number; panelAfterTicks?: number } = {}) {
   let ticks = 0;
   const saved: Record<string, PropertyDescriptor | undefined> = {};
   const values: Record<string, unknown> = {};
@@ -49,11 +49,11 @@ function environment(options: { route?: string; scopeRoot?: boolean; scrollFails
       if (selector.includes('data-e2e="nav-profile"')) return nav;
       if (selector === '[data-e2e="user-title"]') return ticks < (options.profileTitleAfterTicks ?? 0) ? null : title;
       if (selector === '[data-e2e="user-subtitle"]') return options.displayNameTitle ? subtitle : null;
-      if (selector === '[data-e2e="liked-tab"]') return tab;
+      if (selector === '[data-e2e="liked-tab"]') return ticks < (options.tabAfterTicks ?? 0) ? null : tab;
       return null;
     },
     querySelectorAll(selector: string) {
-      if (selector === '[data-e2e="liked-tab"]') return [tab];
+      if (selector === '[data-e2e="liked-tab"]') return ticks < (options.tabAfterTicks ?? 0) ? [] : [tab];
       return [];
     },
   };
@@ -203,7 +203,7 @@ test("stable handle cannot conceal a changed session secUid", async () => {
 
 
 test("completed documents wait for hydrated viewer and own-profile heading", async () => {
-  for (const options of [{ readyAfterTicks: 2 }, { profileTitleAfterTicks: 3 }, { displayNameTitle: true }, { panelAfterTicks: 5 }]) {
+  for (const options of [{ readyAfterTicks: 2 }, { profileTitleAfterTicks: 3 }, { displayNameTitle: true }, { panelAfterTicks: 5 }, { tabAfterTicks: 4 }]) {
     const env = environment(options);
     try {
       await executeTiktokScopeOnce(message("hydration-" + JSON.stringify(options)));
