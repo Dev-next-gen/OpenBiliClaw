@@ -19,8 +19,10 @@ integration contract (profile/bootstrap/incremental all route through
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -66,6 +68,41 @@ TT_BOOTSTRAP_SCOPE_LABELS: dict[str, str] = {
 }
 
 
+def _text(value: object) -> str:
+    """Accept text fields without stringifying arbitrary external containers."""
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _bounded_result(payload: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    """Enforce the immutable task's scope and cumulative per-scope row budget."""
+    raw_scopes = payload.get("scopes", list(TT_BOOTSTRAP_SCOPE_EVENT_TYPES))
+    allowed = (
+        {
+            scope
+            for scope in raw_scopes
+            if isinstance(scope, str) and scope in TT_BOOTSTRAP_SCOPE_EVENT_TYPES
+        }
+        if isinstance(raw_scopes, list)
+        else set()
+    )
+    raw_cap = payload.get("max_items_per_scope", 300)
+    cap = min(300, max(0, raw_cap)) if type(raw_cap) is int else 0
+    counts = dict.fromkeys(allowed, 0)
+    rows: list[dict[str, Any]] = []
+    for row in result.get("videos", []):
+        scope = _text(row.get("scope"))
+        if scope not in allowed or counts[scope] >= cap:
+            result["bounds_exceeded"] = True
+            continue
+        counts[scope] += 1
+        rows.append(row)
+    result["videos"] = rows
+    result["scope_counts"] = counts
+    if result.get("bounds_exceeded") is True and result.get("status") in {"ok", "empty"}:
+        result["status"] = "degraded"
+    return result
+
+
 def tiktok_bootstrap_videos_to_events(
     videos: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -86,17 +123,17 @@ def tiktok_bootstrap_videos_to_events(
     for item in videos:
         if not isinstance(item, dict):
             continue
-        scope = str(item.get("scope", "")).strip()
+        scope = _text(item.get("scope", ""))
         event_type = TT_BOOTSTRAP_SCOPE_EVENT_TYPES.get(scope)
         if event_type is None:
             continue
 
-        title = str(item.get("title", "")).strip()
-        url = str(item.get("url", "")).strip()
+        title = _text(item.get("title", ""))
+        url = _text(item.get("url", ""))
         if not title and not url:
             continue
 
-        author = str(item.get("author", "")).strip()
+        author = _text(item.get("author", ""))
         label = TT_BOOTSTRAP_SCOPE_LABELS[scope]
         # Custom context — scope label is more precise than the generic
         # event_type verb. Mirrors the wording style preference / soul
@@ -107,7 +144,7 @@ def tiktok_bootstrap_videos_to_events(
 
         # Identity key differs by scope.
         identity_key = "creator_sec_uid" if scope == "tt_follow" else "video_id"
-        identity_value = str(item.get(identity_key, "")).strip()
+        identity_value = _text(item.get(identity_key, ""))
 
         # scope_short strips the "tt_" prefix so import_source reads
         # "tt_bootstrap_collect" rather than "tt_bootstrap_tt_collect".
@@ -115,8 +152,8 @@ def tiktok_bootstrap_videos_to_events(
 
         metadata: dict[str, Any] = {
             identity_key: identity_value,
-            "author_sec_uid": str(item.get("author_sec_uid", "")).strip(),
-            "cover_url": str(item.get("cover_url", "")).strip(),
+            "author_sec_uid": _text(item.get("author_sec_uid", "")),
+            "cover_url": _text(item.get("cover_url", "")),
             "import_source": f"tt_bootstrap_{scope_short}",
             "signal_strength": TT_BOOTSTRAP_SIGNAL_STRENGTH[scope],
         }
@@ -138,12 +175,12 @@ def tiktok_bootstrap_videos_to_events(
 def _video_key(video: dict[str, Any]) -> str:
     """Identity key for dedup. Includes scope so the same video_id can
     legitimately appear in two scopes (e.g. user liked AND collected)."""
-    scope = str(video.get("scope", "")).strip()
-    video_id = str(video.get("video_id", "")).strip()
-    creator_sec_uid = str(video.get("creator_sec_uid", "")).strip()
-    url = str(video.get("url", "")).strip()
-    title = str(video.get("title", "")).strip()
-    key = video_id or creator_sec_uid or url or title
+    scope = _text(video.get("scope", ""))
+    video_id = _text(video.get("video_id", ""))
+    creator_sec_uid = _text(video.get("creator_sec_uid", ""))
+    if scope not in TT_BOOTSTRAP_SCOPE_EVENT_TYPES:
+        return ""
+    key = creator_sec_uid if scope == "tt_follow" else video_id
     return f"{scope}:{key}" if key else ""
 
 
@@ -192,6 +229,9 @@ def _merge_tiktok_result_payload(
         added.append(video)
 
     merged: dict[str, Any] = {}
+    for key in ("account_key", "sec_uid_key", "bounds_exceeded"):
+        if current.get(key):
+            merged[key] = current[key]
     if merged_videos:
         merged["videos"] = merged_videos
 
@@ -340,6 +380,89 @@ class TiktokTaskQueue:
                 continue
             count += 1
         return count
+
+    def bind_account(
+        self,
+        task_id: str,
+        *,
+        viewer_handle: object,
+        viewer_sec_uid: object,
+        profile_update: bool,
+    ) -> str:
+        """Bind observed viewer claims once; never label DOM identity as verified.
+
+        Hash the normalized claims locally. Profile imports reject account switches;
+        ordinary smoke tasks only bind their own result and cannot bind the profile.
+        """
+        handle = _text(viewer_handle).lower()
+        sec_uid = _text(viewer_sec_uid)
+        if not re.fullmatch(r"[a-z0-9_.]{2,24}", handle):
+            raise ValueError("tiktok_viewer_identity_required")
+        if sec_uid and not re.fullmatch(r"[A-Za-z0-9_=-]{6,256}", sec_uid):
+            raise ValueError("tiktok_viewer_identity_invalid")
+        # The DOM can identify the same viewer with or without SSR secUid.
+        # Keep the handle namespace stable and record secUid only as an optional
+        # conflict guard. A handle change remains an explicit account switch.
+        account_key = "sha256:" + hashlib.sha256(("handle:" + handle).encode()).hexdigest()
+        sec_uid_key = (
+            "sha256:" + hashlib.sha256(("sec:" + sec_uid).encode()).hexdigest() if sec_uid else ""
+        )
+        conn = self._db.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT status, result_json FROM tiktok_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(task_id)
+            current = json.loads(row["result_json"] or "{}")
+            if row["status"] in {"completed", "failed"} or current.get(
+                "_openbiliclaw_terminal_status"
+            ):
+                conn.commit()
+                return _text(current.get("account_key"))
+            previous = current.get("account_key")
+            previous_uid_key = _text(current.get("sec_uid_key"))
+            if (previous and previous != account_key) or (
+                previous_uid_key and sec_uid_key and previous_uid_key != sec_uid_key
+            ):
+                raise ValueError("tiktok_task_account_mismatch")
+            if profile_update:
+                bound = conn.execute(
+                    "SELECT value FROM auth_state WHERE key = 'tiktok_profile_account_key'"
+                ).fetchone()
+                bound_uid = conn.execute(
+                    "SELECT value FROM auth_state WHERE key = 'tiktok_profile_sec_uid_key'"
+                ).fetchone()
+                if (bound and bound["value"] != account_key) or (
+                    bound_uid and sec_uid_key and bound_uid["value"] != sec_uid_key
+                ):
+                    raise ValueError("tiktok_account_switch_requires_reset")
+                conn.execute(
+                    "INSERT OR IGNORE INTO auth_state (key, value) VALUES (?, ?)",
+                    ("tiktok_profile_account_key", account_key),
+                )
+                if sec_uid_key:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO auth_state (key, value) VALUES (?, ?)",
+                        ("tiktok_profile_sec_uid_key", sec_uid_key),
+                    )
+                elif bound_uid:
+                    sec_uid_key = str(bound_uid["value"])
+            current["account_key"] = account_key
+            if sec_uid_key:
+                current["sec_uid_key"] = sec_uid_key
+            conn.execute(
+                "UPDATE tiktok_tasks SET result_json = ? WHERE id = ?",
+                (json.dumps(current), task_id),
+            )
+            conn.commit()
+            return account_key
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def next_pending(self, only_ids: set[str] | None = None) -> dict[str, Any] | None:
         stale_before = (datetime.now(UTC) - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
@@ -505,7 +628,7 @@ class TiktokTaskQueue:
             # check and a late partial's write.
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT status, result_json FROM tiktok_tasks WHERE id = ?",
+                "SELECT status, result_json, payload_json FROM tiktok_tasks WHERE id = ?",
                 (task_id,),
             ).fetchone()
             if row is None or str(row["status"]) in {"completed", "failed"}:
@@ -534,6 +657,9 @@ class TiktokTaskQueue:
                 debug=debug,
                 completion_status=completion_status,
             )
+            merged = _bounded_result(json.loads(row["payload_json"] or "{}"), merged)
+            accepted_keys = {_video_key(item) for item in merged["videos"]}
+            added = [item for item in added if _video_key(item) in accepted_keys]
             result = json.dumps(merged, ensure_ascii=False)
             if complete:
                 conn.execute(
@@ -565,7 +691,15 @@ class TiktokTaskQueue:
         debug: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Stage the immutable canonical result before downstream projection."""
-        from openbiliclaw.sources.task_result_protocol import stage_terminal_result
+        from openbiliclaw.sources.task_result_protocol import (
+            STAGED_TERMINAL_STATUS_FIELD,
+            mutate_unstaged_result,
+        )
+
+        if not terminal_status.strip():
+            raise ValueError("terminal_status is required")
+        task = self.get(task_id) or {}
+        task_payload = json.loads(task.get("payload_json") or "{}")
 
         def merge(current: dict[str, Any]) -> dict[str, Any]:
             merged, _added = _merge_tiktok_result_payload(
@@ -575,15 +709,21 @@ class TiktokTaskQueue:
                 debug=debug,
                 completion_status=terminal_status,
             )
-            return merged
+            canonical = _bounded_result(task_payload, merged)
+            canonical[STAGED_TERMINAL_STATUS_FIELD] = canonical["status"]
+            return canonical
 
-        return stage_terminal_result(
+        # The common mutation primitive holds the same BEGIN IMMEDIATE lock,
+        # checks first-final-wins, and publishes payload + derived marker in
+        # one write. Derive the status inside that lock so a concurrently
+        # accepted partial cannot hide that its rows were clipped.
+        _mutated, canonical = mutate_unstaged_result(
             self._db,
             table="tiktok_tasks",
             task_id=task_id,
-            terminal_status=terminal_status,
-            merge=merge,
+            mutate=merge,
         )
+        return canonical
 
     def complete_staged_result(self, task_id: str) -> bool:
         """Mark a staged canonical result complete without replacing it."""
@@ -608,7 +748,7 @@ class TiktokTaskQueue:
             self._db,
             table="tiktok_tasks",
             task_id=task_id,
-            mutate=lambda _current: result_payload,
+            mutate=lambda current: {**current, **result_payload},
             terminal_status="failed",
         )
         return mutated

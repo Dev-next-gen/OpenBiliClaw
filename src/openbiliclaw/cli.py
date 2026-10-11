@@ -525,7 +525,7 @@ _DEFAULT_REDDIT_BOOTSTRAP_WAIT_SECONDS = 180.0
 # legal task execution budget (29 minutes + 30 seconds result grace).
 _DEFAULT_LINUXDO_BOOTSTRAP_WAIT_SECONDS = 32.5 * 60.0
 _DEFAULT_V2EX_BOOTSTRAP_WAIT_SECONDS = 300.0
-_DEFAULT_TIKTOK_BOOTSTRAP_WAIT_SECONDS = 180.0
+_DEFAULT_TIKTOK_BOOTSTRAP_WAIT_SECONDS = 480.0
 _EXTENSION_PRESENCE_REQUIRED_WARNING = (
     "WARN extension presence required; backend will pause background LLM work "
     "after grace period if no extension client connects"
@@ -3739,7 +3739,7 @@ def _collect_tiktok_bootstrap_events(
       - ``"degraded"``   — task completed with usable videos, but at least
         one scope could not prove pagination completeness
       - ``"empty"``      — task completed but extension returned 0 videos
-        (typical when the user is not logged in to tiktok.com)
+        (only a positively observed signed-in empty list)
       - ``"timeout"``    — wait window expired, task still pending
       - ``"failed"``     — extension or backend reported error
       - ``"skipped"``    — no task_id (DB unavailable / budget exhausted)
@@ -7968,16 +7968,13 @@ def _ask_tiktok_inclusion() -> bool:
     console.print("[bold]准备 TikTok 接入[/bold]")
     console.print("请确认以下三件事都做了:")
     console.print("  [cyan]☐[/cyan] 装好了 OpenBiliClaw 浏览器扩展")
-    console.print(
-        "  [cyan]☐[/cyan] 浏览器目前是打开的且是当前 [bold]活跃窗口[/bold]"
-        "(扩展需要前台 tab 才能让列表分页加载)"
-    )
+    console.print("  [cyan]☐[/cyan] 浏览器保持打开，扩展已连接当前后端")
     console.print("  [cyan]☐[/cyan] 已经登录了 https://www.tiktok.com")
     console.print()
     console.print(
-        "[bold yellow]⚠[/bold yellow]  接下来扩展会[bold]在你的浏览器里自动打开"
-        "一个新 tab[/bold]并切到那个 tab(会抢一次焦点),依次读取点赞 / 收藏 /"
-        "观看历史 / 关注四个范围。整个过程 30-90 秒,完成后扩展会自动关闭它。"
+        "接下来扩展会在浏览器中打开一个后台标签页，依次读取点赞 / 收藏 /"
+        "观看历史 / 关注四个范围，完成后自动关闭。最多等待约 8 分钟；"
+        "如果页面无法确认或列表加载受限，会报告失败或部分完成。"
     )
     console.print()
     if not typer.confirm("准备好了吗,可以开始吗?", default=True):
@@ -10125,8 +10122,8 @@ async def run_guided_init(
     elif instagram_status == "failed":
         console.print("  [yellow]Instagram 任务失败 —— 检查扩展日志后重试。[/yellow]")
 
-    # TikTok is also extension-tab-driven; keep it serial with the other
-    # focus-grabbing dispatchers (same rationale as XHS→Douyin→YouTube).
+    # TikTok uses a background task tab; serialize with the other sources
+    # to respect the shared browser-task mutex.
     tiktok_task_id = (
         (await _enqueue_register_kick(_enqueue_tiktok_bootstrap_task, "tiktok"))
         if include_tiktok
@@ -10135,10 +10132,10 @@ async def run_guided_init(
     if tiktok_task_id:
         console.print(
             "  [dim]已请求扩展拉 TikTok 点赞 / 收藏 / 观看历史 / 关注"
-            "(开始抢一次浏览器焦点,~60-90 秒)。[/dim]"
+            "(后台标签页顺序读取，最多等待约 8 分钟)。[/dim]"
         )
     if include_tiktok:
-        await _stage1_begin_source("TikTok", wait_hint="扩展未响应会在约 3 分钟后自动跳过")
+        await _stage1_begin_source("TikTok", wait_hint="扩展未响应会在约 8 分钟后自动跳过")
     if include_tiktok:
         tiktok_events, tiktok_scope_counts, tiktok_status = await _run_extension_collector(
             _collect_tiktok_bootstrap_events,
@@ -10166,13 +10163,12 @@ async def run_guided_init(
         )
     elif tiktok_status == "empty":
         console.print(
-            "  [yellow]TikTok 任务跑通但 0 条 videos —— "
-            "未登录 tiktok.com，或账号没有可读的点赞 / 收藏 / 历史记录。[/yellow]"
+            "  [yellow]TikTok 任务跑通但 0 条 videos —— 已确认登录且目标列表为空。[/yellow]"
         )
     elif tiktok_status == "timeout":
         console.print(
             "  [dim]TikTok 初始化信号未导入:扩展未连接或任务仍在后台跑。"
-            "可设 OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS=180 延长等待。[/dim]"
+            "可通过 OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS 调整等待。[/dim]"
         )
     elif tiktok_status == "failed":
         console.print("  [yellow]TikTok 任务失败 —— 检查扩展日志,或重试 init。[/yellow]")

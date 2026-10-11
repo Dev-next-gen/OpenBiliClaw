@@ -203,3 +203,25 @@ test("verifyTiktok is read-only and requires existing membership evidence", asyn
     status: "login_required",
   });
 });
+
+test("saveTiktok refuses an SPA route switch while waiting for content", async () => {
+  const env = fixture();
+  env.isContentReady = () => {
+    env.currentUrl = "https://www.tiktok.com/@other/video/999999999";
+    return true;
+  };
+  assert.notEqual((await saveTiktok(task, env) as { status: string }).status, "synced");
+  assert.equal(env.clicks, 0);
+});
+
+test("saveTiktok never confirms another SPA video's selected control", async () => {
+  const env = fixture({ confirmAfterClick: false });
+  env.findFavoriteControls = () => [{
+    isSelected: () => env.clicks > 0,
+    click() {
+      env.clicks += 1;
+      env.currentUrl = "https://www.tiktok.com/@other/video/999999999";
+    },
+  }];
+  assert.notEqual((await saveTiktok(task, env) as { status: string }).status, "synced");
+});

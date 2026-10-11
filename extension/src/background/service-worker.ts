@@ -800,7 +800,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message.action === "TIKTOK_SCOPE_RESULT") {
-    void handleTiktokScopeResult(message.data as TiktokScopeResult)
+    void handleTiktokScopeResult(message.data as TiktokScopeResult, sender.tab?.id ?? -1)
       .then(() => {
         sendResponse({ ok: true });
       })

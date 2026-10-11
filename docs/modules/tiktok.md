@@ -74,8 +74,8 @@ Web API 后端不伪造任何身份材料，身份生命周期如下：
 TikTok 是 guided init 的正式来源（`guidedInit: true`）：
 
 - **准入**：`_INIT_SOURCE_ORDER` 与 `init_prereqs._PLATFORM_SOURCE_FIELDS` 均含 `tiktok`；`POST /api/init` 的显式 `sources` 选择可只选 tiktok（不再归一化为空）。前端 setup / 桌面 / popup 的初始化来源清单由 `web/shared/source-status.js` 的 `SOURCE_CAPABILITIES` 派生，无需逐页注册。
-- **CLI**：`openbiliclaw init --yes-tiktok` 跳过提问直接启用，`--no-tiktok` 跳过；`OPENBILICLAW_NO_TIKTOK=1` 优先级最高（覆盖 `--yes-tiktok`）。非交互终端默认不启用。交互模式会展示扩展安装 / 登录 tiktok.com / 前台 tab 焦点抢占的准备清单。
-- **采集链**：init 第 1 阶段在 Instagram 之后串行调用 `_enqueue_tiktok_bootstrap_task`（`enqueue_tiktok_bootstrap` + kick）与 `_collect_tiktok_bootstrap_events`（轮询 `tiktok_tasks` 行直到 terminal，默认等待 180 秒，`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS` 可调）；终态标签为 `ok / degraded / empty / timeout / failed / skipped`，`degraded` 保留已采事件并按部分完成上报。
+- **CLI**：`openbiliclaw init --yes-tiktok` 跳过提问直接启用，`--no-tiktok` 跳过；`OPENBILICLAW_NO_TIKTOK=1` 优先级最高（覆盖 `--yes-tiktok`）。非交互终端默认不启用。交互模式会展示扩展安装 / 登录 tiktok.com / 后台任务标签页的准备清单。
+- **采集链**：init 第 1 阶段在 Instagram 之后串行调用 `_enqueue_tiktok_bootstrap_task`（`enqueue_tiktok_bootstrap` + kick）与 `_collect_tiktok_bootstrap_events`（轮询 `tiktok_tasks` 行直到 terminal，默认等待 480 秒，`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS` 可调）；终态标签为 `ok / degraded / empty / timeout / failed / skipped`，`degraded` 保留已采事件并按部分完成上报。
 - **画像链**：任务结果由 task-result 路由负责持久化与事件入口重放（init-owned 任务的画像传播不被 init 围栏跳过）；本 run 的偏好分析与画像构建直接使用收集到的事件，经 `_tiktok_events_to_history_items` 转成画像构建行（`source_platform=tiktok`）。
 - **调度种子**：`ok` 终态 seed `last_attempt_at` / `last_success_at`（`seed_guided_init_attempts` 的 ok-only 组），`empty` / `degraded` / `failed` 不推进增量时钟。
 
@@ -246,3 +246,12 @@ PYTHONPATH=src python scripts/smoke_tiktok_pipeline.py --config /path/to/config.
 ### 登录态续验（2026-10-10）
 
 已安装 Chrome 分支扩展自动同步 Cookie、真实 passport 验证与关键词搜索通过；正式登录搜索 producer 使用完整短语，4 条候选经实际模型评估全部入池并生成文案。完整证据及测试边界见 [验收记录](../platform-source-acceptance.tiktok.md#已安装-chrome-与登录搜索续验2026-10-10)。这不扩展 discovery-only 范围。
+
+## TikTok full-source 修复验收（2026-10-11）
+
+- 后端 `bootstrap_profile` wire 与插件多 scope 调度统一；`max_items_per_scope` 在扩展和后端累计合并时均冻结且最多 300；后端裁剪会持久保留 bounds_exceeded，并将最终 canonical status 与 staged marker 同时降级为 degraded。Python 实际 next-task → TypeScript dispatcher → API 入库集成测试覆盖四种事件及超额裁剪，不把 DOM fixture 当真实登录态证据。
+- 采集只接受当前 viewer 本人 profile 的已确认 scope 列表；登录墙优先于旧登录标记。scope 之间固定账号，后端将 observed identity 规范化并散列为本地 account key；这不是上游 verified identity。account_key 固定使用规范化 handle 的 SHA-256；可选 secUid 只作为单向散列冲突守卫，字段暂缺或补齐不会改变同账号分区。画像首次绑定保存在 `auth_state.tiktok_profile_account_key` 与可选 `tiktok_profile_sec_uid_key`，切换账号返回 `tiktok_account_switch_requires_reset`，须使用新数据目录或显式重置后再导入，公开发现不受影响。
+- 只有冻结 `profile_update=true`、incremental 或当前 init-owned 任务能传播画像事件。普通 smoke 仅写任务结果，不写画像、seen keys 或全局账号绑定。事件幂等键含 account key，任意容器字段不会被字符串化成作者/身份。
+- scope 回报使用 durable FIFO；120 秒 idle 与最多 360 秒 absolute deadline 分别持久化，恢复/心跳不延长 idle；超时/后续 scope 失败保留既有 rows。task-tab sender 校验与整页导航恢复阻止串任务，默认周期同步仍关闭，任务标签保持后台。
+- 收藏执行在等待与确认时重读当前视频 URL；SPA 切换不允许点击另一视频，也不把其选中态当成功。授权仍为单条 exact platform/action/content_id/target。
+- 真实 Chrome 控制当前返回 `nodeRepl.fetch request failed`，没有可读标签页；本批四项账号能力的 live E2E 尚未完成。此前 #275 的搜索/Cookie E2E 仅证明发现链路，不替代本批验收。

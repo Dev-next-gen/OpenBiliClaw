@@ -754,6 +754,7 @@ def enqueue_tiktok_bootstrap(
             payload = _incremental_payload(
                 {
                     "scopes": ["tt_like", "tt_collect", "tt_history", "tt_follow"],
+                    "profile_update": True,
                     "max_items_per_scope": max(1, max_items),
                     "max_scroll_rounds": max(0, scroll_rounds),
                 },

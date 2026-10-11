@@ -21,6 +21,10 @@ import {
   detectTiktokEmptyState,
   extractTiktokItemsFromDocument,
   pickTiktokScrollTarget,
+  isTiktokElementVisible,
+  isTiktokOwnProfile,
+  resolveTiktokScopeRoot,
+  TIKTOK_SCOPE_TAB_SELECTORS,
 } from "./tt/dom-extractor.ts";
 import {
   readTiktokUniversalData,
@@ -68,7 +72,7 @@ function findClickableByText(labels: string[]): HTMLElement | null {
   );
   for (const el of candidates) {
     const text = visibleText(el).toLowerCase();
-    if (!text || text.length > 40) continue;
+    if (!text || text.length > 40 || !isTiktokElementVisible(el)) continue;
     if (normalized.some((label) => text === label || text.includes(label))) return el;
   }
   return null;
@@ -98,14 +102,14 @@ function resolveViewerHandle(): string {
     const raw =
       document.getElementById(TIKTOK_UNIVERSAL_DATA_ELEMENT_ID)?.textContent ?? "";
     if (raw) {
-      const { viewer } = readTiktokUniversalData(raw);
-      if (viewer.handle) return viewer.handle;
+      const { viewer, loggedIn } = readTiktokUniversalData(raw);
+      if (loggedIn && viewer.handle) return viewer.handle;
     }
   } catch {
     // Fall through to DOM.
   }
   const anchor = document.querySelector<HTMLAnchorElement>(
-    '[data-e2e="nav-profile"] a[href*="/@"], a[data-e2e="nav-profile"][href*="/@"], header a[href^="/@"]',
+    '[data-e2e="nav-profile"] a[href*="/@"], a[data-e2e="nav-profile"][href*="/@"]',
   );
   const href = anchor?.getAttribute("href") ?? "";
   const match = href.match(/\/@([\w.]{2,24})/);
@@ -123,41 +127,28 @@ interface ScopeNavReport {
   page_url: string;
 }
 
-const SCOPE_TAB_SELECTORS: Record<"tt_like" | "tt_collect", string[]> = {
-  tt_like: [
-    '[data-e2e="liked-tab"]',
-    '[data-e2e="user-liked-tab"]',
-    '[data-e2e="user-tab-liked"]',
-  ],
-  tt_collect: [
-    '[data-e2e="favorites-tab"]',
-    '[data-e2e="user-favorites-tab"]',
-    '[data-e2e="user-tab-favorites"]',
-  ],
-};
-
 const SCOPE_TAB_LABELS: Record<"tt_like" | "tt_collect", string[]> = {
   tt_like: ["Liked", "Likes", "喜欢"],
   tt_collect: ["Favorites", "收藏"],
 };
 
+function ownProfileVisible(handle: string): boolean {
+  if (!isTiktokOwnProfile(location.href, handle)) return false;
+  const heading = document.querySelector<HTMLElement>('[data-e2e="user-title"]');
+  return Boolean(heading && isTiktokElementVisible(heading) &&
+    visibleText(heading).replace(/^@/, "").toLowerCase() === handle.toLowerCase());
+}
+
 async function ensureOnOwnProfile(handle: string): Promise<boolean> {
-  if (location.pathname.startsWith("/@")) return true;
-  const profileLink =
-    document.querySelector<HTMLElement>('[data-e2e="nav-profile"]') ??
-    document.querySelector<HTMLElement>('header a[href^="/@"]');
-  if (profileLink) {
-    fireRealClick(profileLink);
-    await sleep(NAV_SETTLE_MS);
-    return true;
-  }
-  if (handle) {
-    window.history.pushState({}, "", `/@${handle}`);
-    window.dispatchEvent(new PopStateEvent("popstate"));
-    await sleep(NAV_SETTLE_MS);
-    return true;
-  }
-  return false;
+  if (!handle) return false;
+  if (ownProfileVisible(handle)) return true;
+  const profileLink = document.querySelector<HTMLElement>('[data-e2e="nav-profile"]');
+  if (!profileLink || !isTiktokElementVisible(profileLink)) return false;
+  fireRealClick(profileLink);
+  await sleep(NAV_SETTLE_MS);
+  // Clicking or changing a URL is not evidence that the app rendered our
+  // profile. A full navigation resumes the persisted scope on the new page.
+  return ownProfileVisible(handle);
 }
 
 async function navigateToProfileTab(
@@ -173,9 +164,9 @@ async function navigateToProfileTab(
     report.note = "profile_entry_not_found";
     return report;
   }
-  for (const sel of SCOPE_TAB_SELECTORS[scope]) {
+  for (const sel of TIKTOK_SCOPE_TAB_SELECTORS[scope]) {
     const el = document.querySelector<HTMLElement>(sel);
-    if (el) {
+    if (el && isTiktokElementVisible(el)) {
       fireRealClick(el);
       report.attempted = true;
       report.note = `selector:${sel}`;
@@ -214,7 +205,7 @@ async function navigateToFollowList(handle: string): Promise<ScopeNavReport> {
   ];
   for (const sel of statSelectors) {
     const el = document.querySelector<HTMLElement>(sel);
-    if (el) {
+    if (el && isTiktokElementVisible(el)) {
       fireRealClick(el);
       report.attempted = true;
       report.note = `selector:${sel}`;
@@ -258,7 +249,17 @@ async function navigateToWatchHistory(): Promise<ScopeNavReport> {
   }
   fireRealClick(avatar);
   await sleep(1_000);
-  const entry = findClickableByText(["Watch history", "观看历史", "观看记录"]);
+  let entry = findClickableByText(["Watch history", "观看历史", "观看记录"]);
+  // Some desktop layouts nest history under Settings / Activity center.
+  // Only explicit read-only menu labels are eligible; no arbitrary URL jump.
+  for (const labels of [["Activity center", "活动中心"], ["Settings", "设置"], ["Activity center", "活动中心"]]) {
+    if (entry) break;
+    const parent = findClickableByText(labels);
+    if (!parent) continue;
+    fireRealClick(parent);
+    await sleep(TAB_SETTLE_MS);
+    entry = findClickableByText(["Watch history", "观看历史", "观看记录"]);
+  }
   if (!entry) {
     report.note = "history_entry_not_found";
     report.page_url = location.href;
@@ -276,6 +277,9 @@ async function navigateToScope(
   scope: TiktokScope,
   handle: string,
 ): Promise<ScopeNavReport> {
+  if (resolveTiktokScopeRoot(document, scope) && (scope === "tt_history" || ownProfileVisible(handle))) {
+    return { attempted: true, note: "existing_scope", page_url: location.href };
+  }
   if (scope === "tt_history") return navigateToWatchHistory();
   if (scope === "tt_follow") return navigateToFollowList(handle);
   return navigateToProfileTab(scope, handle);
@@ -295,15 +299,15 @@ const END_OF_FEED_PHRASES: readonly string[] = [
   "已经到底",
 ];
 
-function detectEndOfFeed(): string {
+function detectEndOfFeed(root: HTMLElement): string {
   const candidates = Array.from(
-    document.querySelectorAll<HTMLElement>(
+    root.querySelectorAll<HTMLElement>(
       'div, span, p, [class*="loading"], [class*="end"], [class*="footer"]',
     ),
   );
   for (const el of candidates) {
     const text = (el.textContent ?? "").trim().toLowerCase();
-    if (!text || text.length > 40) continue;
+    if (!text || text.length > 40 || !isTiktokElementVisible(el)) continue;
     for (const phrase of END_OF_FEED_PHRASES) {
       if (text.includes(phrase)) return phrase;
     }
@@ -315,8 +319,9 @@ function detectEndOfFeed(): string {
 // Scope execution
 // ---------------------------------------------------------------------------
 
-async function runScope(msg: TiktokScopeExecuteMessage): Promise<TiktokScopeResult> {
+async function runScope(msg: TiktokScopeExecuteMessage, record: ScopeExecutionRecord): Promise<TiktokScopeResult> {
   const sink = new TiktokItemSink({ maxItems: msg.max_items });
+  sink.ingest(record.accepted_items ?? []);
   let navigationFailed = false;
   let navigationError = "";
   let navNote = "";
@@ -324,42 +329,74 @@ async function runScope(msg: TiktokScopeExecuteMessage): Promise<TiktokScopeResu
   let scrollRounds = 0;
 
   const accessState = resolveAccessState();
+  let scopeRoot: HTMLElement | null = null;
+  let viewerHandle = record.viewer_handle ?? "";
+  let viewerSecUid = record.viewer_sec_uid ?? "";
 
-  const harvestDom = (): void => {
+  const harvestDom = async (): Promise<void> => {
+    if (resolveAccessState() !== "signed_in" || resolveViewerHandle() !== viewerHandle) {
+      throw new Error("account_session_changed");
+    }
+    if (viewerSecUid) {
+      const raw = document.getElementById(TIKTOK_UNIVERSAL_DATA_ELEMENT_ID)?.textContent ?? "";
+      const current = readTiktokUniversalData(raw);
+      if (!current.loggedIn || current.viewer.secUid !== viewerSecUid) throw new Error("account_session_changed");
+    }
+    if (msg.scope !== "tt_history" && !ownProfileVisible(viewerHandle)) {
+      throw new Error("account_profile_changed");
+    }
+    scopeRoot = resolveTiktokScopeRoot(document, msg.scope);
+    if (!scopeRoot) throw new Error("scope_root_not_proven");
     const rows = extractTiktokItemsFromDocument(
-      document,
+      scopeRoot,
       msg.scope,
       location.origin,
       msg.max_items,
     );
-    sink.ingest(rows);
+    sink.ingest(rows.filter((row) => msg.scope !== "tt_follow" || row.author_handle.toLowerCase() !== viewerHandle.toLowerCase()));
+    record.accepted_items = sink.snapshot();
+    await persistScopeRecord(record);
   };
 
   try {
+    if (accessState !== "signed_in" && sink.count() > 0) throw new Error("account_session_changed");
     if (accessState === "signed_in") {
-      const handle = resolveViewerHandle();
-      const nav = await navigateToScope(msg.scope, handle);
+      const currentHandle = resolveViewerHandle();
+      const raw = document.getElementById(TIKTOK_UNIVERSAL_DATA_ELEMENT_ID)?.textContent ?? "";
+      const identity = readTiktokUniversalData(raw);
+      const currentSecUid = identity.loggedIn && identity.viewer.handle === currentHandle ? identity.viewer.secUid : "";
+      if (!currentHandle) throw new Error("viewer_identity_unknown");
+      if ((record.viewer_handle && record.viewer_handle !== currentHandle) ||
+          (record.viewer_sec_uid && record.viewer_sec_uid !== currentSecUid)) {
+        throw new Error("account_session_changed");
+      }
+      viewerHandle = currentHandle;
+      viewerSecUid = currentSecUid;
+      record.viewer_handle = viewerHandle;
+      record.viewer_sec_uid = viewerSecUid;
+      await persistScopeRecord(record);
+      const nav = await navigateToScope(msg.scope, viewerHandle);
       navNote = nav.note;
       navigationFailed = !nav.attempted;
       navigationError = nav.note;
     }
 
     if (!navigationFailed && accessState === "signed_in") {
-      harvestDom();
+      await harvestDom();
       const maxRounds = normalizeTiktokScrollRounds(msg.max_scroll_rounds);
       let stagnantRounds = 0;
       for (let round = 0; round < maxRounds; round += 1) {
         const beforeCount = sink.count();
-        const scrollTarget = pickTiktokScrollTarget(document);
+        const scrollTarget = scopeRoot ? pickTiktokScrollTarget(scopeRoot) : null;
         if (scrollTarget) {
           scrollTarget.scrollTop = scrollTarget.scrollHeight;
         }
-        window.scrollBy({ top: window.innerHeight * 2, behavior: "auto" });
+        if (!scrollTarget) window.scrollBy({ top: window.innerHeight * 2, behavior: "auto" });
         await sleep(SCROLL_DELAY_MS);
-        harvestDom();
+        await harvestDom();
         const afterCount = sink.count();
         scrollRounds = round + 1;
-        endOfFeedPhrase = detectEndOfFeed();
+        endOfFeedPhrase = scopeRoot ? detectEndOfFeed(scopeRoot) : "";
         stagnantRounds = afterCount > beforeCount ? 0 : stagnantRounds + 1;
         if (endOfFeedPhrase) break;
         if (
@@ -375,13 +412,13 @@ async function runScope(msg: TiktokScopeExecuteMessage): Promise<TiktokScopeResu
           break;
         }
       }
-      harvestDom();
+      await harvestDom();
     }
 
     const items = sink.snapshot();
     const explicitEmpty =
-      accessState === "signed_in" && items.length === 0
-        ? detectTiktokEmptyState(document, msg.scope) !== ""
+      accessState === "signed_in" && items.length === 0 && scopeRoot
+        ? detectTiktokEmptyState(scopeRoot, msg.scope) !== ""
         : false;
     const completion = classifyTiktokScopeCompletion({
       accessState,
@@ -390,7 +427,7 @@ async function runScope(msg: TiktokScopeExecuteMessage): Promise<TiktokScopeResu
       // Hitting the item cap is a planned stop but NOT a terminal end —
       // contract scope_caps: capped scopes remain incomplete (degraded),
       // never silently "ok".
-      endOfFeed: endOfFeedPhrase !== "",
+      endOfFeed: endOfFeedPhrase !== "" && items.length < msg.max_items,
       navigationFailed,
       navigationError,
     });
@@ -399,6 +436,8 @@ async function runScope(msg: TiktokScopeExecuteMessage): Promise<TiktokScopeResu
       scope: msg.scope,
       items,
       scope_count: items.length,
+      viewer_handle: viewerHandle,
+      ...(viewerSecUid ? { viewer_sec_uid: viewerSecUid } : {}),
       status: completion.status,
       ...(completion.error ? { error: completion.error } : {}),
       debug: {
@@ -417,7 +456,9 @@ async function runScope(msg: TiktokScopeExecuteMessage): Promise<TiktokScopeResu
       scope: msg.scope,
       items,
       scope_count: items.length,
-      status: "failed",
+      viewer_handle: viewerHandle,
+      ...(viewerSecUid ? { viewer_sec_uid: viewerSecUid } : {}),
+      status: items.length ? "degraded" : "failed",
       error: String(err),
       debug: {
         access_state: accessState,
@@ -430,20 +471,102 @@ async function runScope(msg: TiktokScopeExecuteMessage): Promise<TiktokScopeResu
   }
 }
 
+const SCOPE_POINTER_KEY = "openbiliclaw_tiktok_scope_pointer_v1";
+const SCOPE_RECORD_KEY = "openbiliclaw_tiktok_content_scope_v1";
+const SCOPE_RECORD_TTL_MS = 5 * 60_000;
+interface ScopeExecutionRecord {
+  token: string;
+  expires_at: number;
+  message: TiktokScopeExecuteMessage;
+  viewer_handle?: string;
+  viewer_sec_uid?: string;
+  result?: TiktokScopeResult;
+  accepted_items?: TiktokScopeResult["items"];
+}
+let activeScopeKey: string | null = null;
+let memoryRecord: ScopeExecutionRecord | null = null;
+
+async function readScopeRecord(): Promise<ScopeExecutionRecord | null> {
+  const value: unknown = (await chrome.storage.local.get(SCOPE_RECORD_KEY))[SCOPE_RECORD_KEY] ?? memoryRecord;
+  if (!value || typeof value !== "object") return null;
+  const record = value as ScopeExecutionRecord;
+  if (typeof record.token !== "string" || !isValidTiktokScopeExecuteMessage(record.message) ||
+      !Number.isFinite(record.expires_at)) return null;
+  if (record.expires_at < Date.now()) {
+    await chrome.storage.local.remove(SCOPE_RECORD_KEY);
+    memoryRecord = null;
+    return null;
+  }
+  return record;
+}
+async function persistScopeRecord(record: ScopeExecutionRecord): Promise<void> {
+  await chrome.storage.local.set({ [SCOPE_RECORD_KEY]: record });
+  memoryRecord = record;
+}
+async function deliverScopeResult(result: TiktokScopeResult): Promise<void> {
+  const response = await chrome.runtime.sendMessage({ action: "TIKTOK_SCOPE_RESULT", data: result }).catch(() => null);
+  if (response?.ok !== true) return;
+  // The dispatcher has durably accepted these rows. Avoid retaining profile
+  // data after ACK, and never delete a newer scope's storage slot.
+  try {
+    const current = (await chrome.storage.local.get(SCOPE_RECORD_KEY))[SCOPE_RECORD_KEY] as ScopeExecutionRecord | undefined;
+    if (current?.message.task_id === result.task_id && current.message.scope === result.scope) {
+      await chrome.storage.local.remove(SCOPE_RECORD_KEY);
+    }
+  } catch { /* Expiring replay is safe if cleanup fails. */ }
+}
+
+/** Keep canonical rows in extension storage; page storage contains only an opaque resume pointer. */
+export async function executeTiktokScopeOnce(data: TiktokScopeExecuteMessage): Promise<void> {
+  const key = `${data.task_id}:${data.scope}`;
+  if (activeScopeKey !== null) return;
+  activeScopeKey = key;
+  let record: ScopeExecutionRecord | null = null;
+  try {
+    const previous = await readScopeRecord();
+    const matches = previous?.message.task_id === data.task_id && previous.message.scope === data.scope;
+    if (matches && previous.result) {
+      await deliverScopeResult(previous.result);
+      return;
+    }
+    record = matches ? previous : {
+      token: crypto.randomUUID(), expires_at: Date.now() + SCOPE_RECORD_TTL_MS, message: data,
+    };
+    await persistScopeRecord(record);
+    sessionStorage.setItem(SCOPE_POINTER_KEY, record.token);
+    const result = await runScope(data, record);
+    record.result = result;
+    await persistScopeRecord(record);
+    try { sessionStorage.removeItem(SCOPE_POINTER_KEY); } catch { /* Result replay remains read-only. */ }
+    await deliverScopeResult(result);
+  } catch (error) {
+    // Failure to persist the resume record must stop before any navigation.
+    // The background dispatcher still owns durable reporting of this failure.
+    const items = record?.accepted_items ?? [];
+    await deliverScopeResult({ task_id: data.task_id, scope: data.scope,
+      items, scope_count: items.length, status: items.length ? "degraded" : "failed",
+      ...(record?.viewer_handle ? { viewer_handle: record.viewer_handle } : {}),
+      ...(record?.viewer_sec_uid ? { viewer_sec_uid: record.viewer_sec_uid } : {}),
+      error: `scope_persistence_failed: ${String(error)}` });
+  } finally { activeScopeKey = null; }
+}
+
+async function resumeTiktokScopeAfterNavigation(): Promise<void> {
+  const record = await readScopeRecord();
+  if (!record || record.result) return;
+  let token: string | null = null;
+  try { token = sessionStorage.getItem(SCOPE_POINTER_KEY); } catch { return; }
+  if (token === record.token) await executeTiktokScopeOnce(record.message);
+}
+
 export function registerTiktokScopeExecutor(): void {
   if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.onMessage) return;
   chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender, _sendResponse) => {
-    if (message.action !== "TIKTOK_SCOPE_EXECUTE") return false;
-    const data = message.data;
-    if (!isValidTiktokScopeExecuteMessage(data)) return false;
-    void runScope(data).then((result) => {
-      chrome.runtime.sendMessage({ action: "TIKTOK_SCOPE_RESULT", data: result }).catch(() => {
-        // The dispatcher timeout backstop reports the task failure if the
-        // service worker is gone before the result can be delivered.
-      });
-    });
+    if (message.action !== "TIKTOK_SCOPE_EXECUTE" || !isValidTiktokScopeExecuteMessage(message.data)) return false;
+    void executeTiktokScopeOnce(message.data);
     return false;
   });
+  void resumeTiktokScopeAfterNavigation().catch(() => { /* Dispatcher timeout reports unavailable recovery storage. */ });
 }
 
 if (typeof chrome !== "undefined" && chrome.runtime) {

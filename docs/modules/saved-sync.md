@@ -195,3 +195,7 @@ runbook 中精确命名的公开测试内容，不授权自动重试或
 开启配置后的自动收藏均返回 `synced`；删除三条本地 membership 后，两条平台收藏与一条
 平台稍后再看仍可读，自动同步配置也恢复为测试前的关闭值。该结果只证明 Bilibili direct
 adapter 的授权链路，不扩大其它平台边界。
+
+## TikTok 精确视频确认（2026-10-11）
+
+TikTok executor 在内容等待结束、点击前与确认循环内重新读取当前 URL。SPA 切换到其他视频时停止，不点击其按钮，也不把该页选中态报告为成功；verify 始终只读。真实站内保存仍需已安装登录态扩展及 exact platform/action/content_id/target 授权，当前未执行。见 [验收台账](../platform-source-acceptance.tiktok.md)。

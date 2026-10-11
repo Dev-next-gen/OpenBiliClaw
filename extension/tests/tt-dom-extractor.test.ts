@@ -14,6 +14,8 @@ import {
   extractTiktokVideoIdFromHref,
   isTiktokLoginWallUrl,
   pickTiktokScrollTarget,
+  isTiktokOwnProfile,
+  resolveTiktokScopeRoot,
 } from "../src/content/tt/dom-extractor.ts";
 
 class FakeElement {
@@ -48,6 +50,8 @@ class FakeElement {
     this.scrollHeight = opts.scrollHeight ?? 0;
     this.clientHeight = opts.clientHeight ?? 0;
   }
+
+  contains(other: FakeElement): boolean { return other === this; }
 
   closest(): FakeElement {
     return this.closestElement ?? this;
@@ -258,13 +262,13 @@ test("detectTiktokAccessState flags login walls by URL, selector, and text", () 
     detectTiktokAccessState(byText as unknown as Document, "https://www.tiktok.com/"),
     "login_wall",
   );
-  // A signed-in marker wins over leftover wall chrome.
+  // Visible login walls override stale signed-in chrome.
   const both = new FakeDocument({
-    presentSelectors: ['[data-e2e="upload-icon"]', '[data-e2e="top-login-button"]'],
+    presentSelectors: ['[data-e2e="nav-profile"]', '[data-e2e="top-login-button"]'],
   });
   assert.equal(
     detectTiktokAccessState(both as unknown as Document, "https://www.tiktok.com/"),
-    "signed_in",
+    "login_wall",
   );
 });
 
@@ -333,10 +337,67 @@ test("pickTiktokScrollTarget finds the nearest scrollable ancestor", () => {
     },
   }) as unknown as Document;
 
-  assert.equal(pickTiktokScrollTarget(doc), scrollable as unknown as Element);
+  const root = Object.assign(doc, { ownerDocument: doc }) as unknown as HTMLElement;
+  assert.equal(pickTiktokScrollTarget(root), scrollable as unknown as Element);
 });
 
 test("pickTiktokScrollTarget returns null without any list anchor", () => {
   const doc = new FakeDocument() as unknown as Document;
-  assert.equal(pickTiktokScrollTarget(doc), null);
+  assert.equal(pickTiktokScrollTarget(doc as unknown as HTMLElement), null);
+});
+
+
+test("own-profile proof rejects another account, video routes and unknown viewer", () => {
+  assert.equal(isTiktokOwnProfile("https://www.tiktok.com/@me.user", "me.user"), true);
+  assert.equal(isTiktokOwnProfile("https://www.tiktok.com/@other.user", "me.user"), false);
+  assert.equal(isTiktokOwnProfile("https://www.tiktok.com/@me.user/video/123456", "me.user"), false);
+  assert.equal(isTiktokOwnProfile("https://www.tiktok.com/@me.user", ""), false);
+});
+
+test("scope roots exclude the navbar and require an unambiguous active scope", () => {
+  const ownLink = new FakeElement({ href: "/@me.user" });
+  const followed = new FakeElement({ href: "/@friend.user" });
+  const list = new FakeElement({ selectorMap: { 'a[href*="/@"]': [followed] } });
+  const doc = {
+    querySelectorAll(selector: string) {
+      if (selector.includes('data-e2e="following-list"')) return [list];
+      if (selector === 'a[href*="/@"]') return [ownLink, followed];
+      return [];
+    },
+  } as unknown as Document;
+  const root = resolveTiktokScopeRoot(doc, "tt_follow");
+  assert.equal(root, list);
+  assert.deepEqual(extractTiktokItemsFromDocument(root!, "tt_follow", "https://www.tiktok.com", 30)
+    .map((row) => row.author_handle), ["friend.user"]);
+  assert.equal(resolveTiktokScopeRoot(doc, "tt_like"), null);
+  const ambiguous = { querySelectorAll: () => [list, new FakeElement()] } as unknown as Document;
+  assert.equal(resolveTiktokScopeRoot(ambiguous, "tt_follow"), null);
+});
+
+test("inactive tabpanels cannot be mistaken for the requested scope", () => {
+  const panel = new FakeElement({ attrs: { role: "tabpanel" } });
+  const inactive = new FakeElement({ attrs: { "aria-selected": "false", "aria-controls": "liked" } });
+  const active = new FakeElement({ attrs: { "aria-selected": "true", "aria-controls": "liked" } });
+  const make = (tab: FakeElement) => ({
+    querySelectorAll: (selector: string) => selector === '[data-e2e="liked-tab"]' ? [tab] : [],
+    getElementById: () => panel,
+  }) as unknown as Document;
+  assert.equal(resolveTiktokScopeRoot(make(inactive), "tt_like"), null);
+  assert.equal(resolveTiktokScopeRoot(make(active), "tt_like"), panel);
+});
+
+
+test("hidden auth templates are not evidence but visible walls override stale markers", () => {
+  const hidden = new FakeElement({ attrs: { "aria-hidden": "true" } });
+  const visible = new FakeElement();
+  const doc = { body: { textContent: "" }, querySelector: (selector: string) => {
+    if (selector === '[data-e2e="nav-profile"]') return hidden;
+    return null;
+  } } as unknown as Document;
+  assert.equal(detectTiktokAccessState(doc, "https://www.tiktok.com/"), "logged_out");
+  const wallDoc = { querySelector: (selector: string) => {
+    if (selector === '[data-e2e="nav-profile"]' || selector === '[data-e2e="login-modal"]') return visible;
+    return null;
+  } } as unknown as Document;
+  assert.equal(detectTiktokAccessState(wallDoc, "https://www.tiktok.com/"), "login_wall");
 });

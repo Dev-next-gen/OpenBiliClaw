@@ -80,6 +80,7 @@ async function confirmSelected(
   env: TiktokNativeSaveEnvironment,
 ): Promise<boolean> {
   for (let attempt = 0; attempt < CONFIRM_ATTEMPTS; attempt += 1) {
+    if (!isSupported(task, env.currentUrl) || !env.isLoggedIn() || env.isUnavailable()) return false;
     const controls = env.findFavoriteControls(task.content_id);
     if (controls.length === 1 && controls[0].isSelected()) return true;
     if (attempt + 1 < CONFIRM_ATTEMPTS) await env.sleep(CONFIRM_INTERVAL_MS);
@@ -110,6 +111,9 @@ export async function saveTiktok(
   if (!env.isLoggedIn()) return { status: "login_required" };
   if (env.isUnavailable()) return { status: "unsupported", error_code: "unsupported_content_type" };
   if (!env.isContentReady()) return { status: "failed", error_code: "native_content_not_ready" };
+  if (!isSupported(task, env.currentUrl)) {
+    return { status: "failed", error_code: "native_content_changed" };
+  }
   const initial = env.findFavoriteControls(task.content_id);
   if (initial.length !== 1) return { status: "failed", error_code: "native_control_not_found" };
   if (initial[0].isSelected()) return { status: "already_synced" };
@@ -143,6 +147,9 @@ export async function verifyTiktok(
   if (!env.isLoggedIn()) return { status: "login_required" };
   if (env.isUnavailable()) return { status: "unsupported", error_code: "unsupported_content_type" };
   if (!env.isContentReady()) return { status: "failed", error_code: "native_content_not_ready" };
+  if (!isSupported(task, env.currentUrl)) {
+    return { status: "failed", error_code: "native_content_changed" };
+  }
   const controls = env.findFavoriteControls(task.content_id);
   if (controls.length !== 1) return { status: "failed", error_code: "native_control_not_found" };
   return controls[0].isSelected()
@@ -229,12 +236,13 @@ function favoriteControls(root: Document, currentUrl: string, contentId: string)
 
 export function createTiktokBrowserEnvironment(
   root: Document = document,
-  currentUrl: string = location.href,
+  currentUrl?: string,
 ): TiktokNativeSaveEnvironment {
+  const readUrl = (): string => currentUrl ?? root.location?.href ?? location.href;
   const rateElementIds = new WeakMap<Element, number>();
   let nextRateElementId = 1;
   return {
-    currentUrl,
+    get currentUrl() { return readUrl(); },
     isLoggedIn() {
       // Fail closed: a positive signed-in marker is required AND no login
       // wall may be visible. Absence of both means logged out.
@@ -252,8 +260,8 @@ export function createTiktokBrowserEnvironment(
       );
     },
     isContentReady() {
-      const contentId = tiktokRouteVideoId(currentUrl);
-      return contentId !== null && favoriteControls(root, currentUrl, contentId).length > 0;
+      const contentId = tiktokRouteVideoId(readUrl());
+      return contentId !== null && favoriteControls(root, readUrl(), contentId).length > 0;
     },
     rateLimitFingerprint() {
       return Array.from(root.querySelectorAll<HTMLElement>(RATE_LIMIT_SELECTOR))
@@ -273,7 +281,7 @@ export function createTiktokBrowserEnvironment(
         .join("\n");
     },
     findFavoriteControls(contentId) {
-      return favoriteControls(root, currentUrl, contentId).map((element) => ({
+      return favoriteControls(root, readUrl(), contentId).map((element) => ({
         isSelected: () => selected(element),
         click: () => element.click(),
       }));

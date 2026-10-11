@@ -142,6 +142,7 @@ _PLATFORMS = (
         {
             "scopes": ["tt_like", "tt_collect", "tt_history", "tt_follow"],
             "max_items_per_scope": 300,
+            "profile_update": True,
             "max_scroll_rounds": 15,
         },
     ),

@@ -336,3 +336,7 @@ Instagram 使用现有 capability-specific contract，不新增第二套鉴权�
 ### TikTok 来源验收补全（2026-10-04）
 
 TikTok 的 passport heartbeat verified 只证明会话有效；搜索可用性须由单独真实搜索验收证明，不由凭据验证状态推导。
+
+### TikTok 的 capability 与账号任务边界（2026-10-11）
+
+公开 discover 仍为 ready；profile/bootstrap/incremental/native-save 独立使用登录态 readiness。passport Cookie 探针只证明会话，不证明浏览器列表可采集。任务还必须从当前 viewer 专属证据确认本人列表；DOM observed claims 不标记 verified。后端绑定首个账号的 opaque key，拒绝跨账号画像混合，普通 smoke 不绑定全局账号。Cookie 仍按原有统一凭据路径存储，不能描述成“后端不接触 Cookie”。

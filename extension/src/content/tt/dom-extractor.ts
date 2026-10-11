@@ -52,7 +52,6 @@ const LOGIN_WALL_SELECTORS: readonly string[] = [
   '[data-e2e="top-login-button"]',
   '[data-e2e="login-modal"]',
   '[data-e2e="login-form"]',
-  '[data-e2e="modal-close-inner-button"]',
   'form[action*="login"]',
 ];
 
@@ -63,7 +62,6 @@ const LOGIN_WALL_SELECTORS: readonly string[] = [
 const SIGNED_IN_SELECTORS: readonly string[] = [
   '[data-e2e="nav-profile"]',
   '[data-e2e="profile-icon"]',
-  '[data-e2e="upload-icon"]',
   '[data-e2e="nav-message"]',
   '[data-e2e="nav-inbox"]',
 ];
@@ -91,12 +89,14 @@ export function detectTiktokAccessState(
   doc: Document,
   urlValue: string,
 ): "signed_in" | "login_wall" | "logged_out" {
-  for (const sel of SIGNED_IN_SELECTORS) {
-    if (doc.querySelector(sel)) return "signed_in";
-  }
   if (isTiktokLoginWallUrl(urlValue)) return "login_wall";
   for (const sel of LOGIN_WALL_SELECTORS) {
-    if (doc.querySelector(sel)) return "login_wall";
+    const element = doc.querySelector<HTMLElement>(sel);
+    if (element && isTiktokElementVisible(element)) return "login_wall";
+  }
+  for (const sel of SIGNED_IN_SELECTORS) {
+    const element = doc.querySelector<HTMLElement>(sel);
+    if (element && isTiktokElementVisible(element)) return "signed_in";
   }
   const bodyText = (doc.body?.textContent ?? "").toLowerCase();
   for (const phrase of LOGIN_WALL_TEXTS) {
@@ -142,14 +142,14 @@ const EMPTY_STATE_TEXTS: Record<TiktokScope, readonly string[]> = {
  * limited to short text-bearing elements so a long description that
  * happens to contain a phrase doesn't false-trigger.
  */
-export function detectTiktokEmptyState(doc: Document, scope: TiktokScope): string {
+export function detectTiktokEmptyState(doc: ParentNode, scope: TiktokScope): string {
   const phrases = EMPTY_STATE_TEXTS[scope];
   const candidates = Array.from(
     doc.querySelectorAll<HTMLElement>("div, span, p, h1, h2, h3"),
   );
   for (const el of candidates) {
     const text = (el.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase();
-    if (!text || text.length > 60) continue;
+    if (!text || text.length > 60 || !isTiktokElementVisible(el)) continue;
     for (const phrase of phrases) {
       if (text.includes(phrase)) return phrase;
     }
@@ -256,7 +256,7 @@ function pickCardMetrics(card: HTMLElement): Pick<
  * anchor that also points at a video (author chips inside video cards).
  */
 export function extractTiktokItemsFromDocument(
-  doc: Document,
+  doc: ParentNode,
   scope: TiktokScope,
   baseUrl: string,
   maxItems: number,
@@ -268,7 +268,7 @@ export function extractTiktokItemsFromDocument(
 }
 
 function extractVideoItems(
-  doc: Document,
+  doc: ParentNode,
   scope: TiktokScope,
   baseUrl: string,
   cap: number,
@@ -282,7 +282,7 @@ function extractVideoItems(
     if (items.length >= cap) break;
     const href = target.getAttribute("href") ?? "";
     const videoId = extractTiktokVideoIdFromHref(href);
-    if (!videoId || seen.has(videoId)) continue;
+    if (!videoId || seen.has(videoId) || !isTiktokElementVisible(target)) continue;
     seen.add(videoId);
 
     const card = findCardContainer(target);
@@ -305,7 +305,7 @@ function extractVideoItems(
 }
 
 function extractFollowItems(
-  doc: Document,
+  doc: ParentNode,
   scope: TiktokScope,
   baseUrl: string,
   cap: number,
@@ -321,7 +321,7 @@ function extractFollowItems(
     // Skip video/photo links (author chips on video cards) and hashtag links.
     if (extractTiktokVideoIdFromHref(href)) continue;
     const handle = extractTiktokHandleFromHref(href);
-    if (!handle || seen.has(handle)) continue;
+    if (!handle || seen.has(handle) || !isTiktokElementVisible(anchor)) continue;
     seen.add(handle);
 
     const card = findCardContainer(anchor);
@@ -354,15 +354,16 @@ const SCROLLABLE_OVERFLOW_TOLERANCE_PX = 4;
  * inner lists; window scrolling often triggers no pagination). Returns
  * null when none is found — callers fall back to window scrolling.
  */
-export function pickTiktokScrollTarget(doc: Document): Element | null {
+export function pickTiktokScrollTarget(doc: HTMLElement): Element | null {
   const anchor =
     doc.querySelector<HTMLElement>('a[href*="/video/"]') ??
     doc.querySelector<HTMLElement>('a[href*="/@"]');
   if (!anchor) return null;
-  const view = doc.defaultView;
+  const view = doc.ownerDocument?.defaultView ?? null;
   let node: Element | null = anchor.parentElement;
   while (node) {
     if (isScrollableContainer(node, view)) return node;
+    if (node === doc) break;
     node = node.parentElement;
   }
   return null;
@@ -389,4 +390,59 @@ function absolutize(href: string, baseUrl: string): string {
   } catch {
     return href;
   }
+}
+
+/** Hidden templates and inactive panels are not account evidence. */
+export function isTiktokElementVisible(element: HTMLElement): boolean {
+  const view = element.ownerDocument?.defaultView;
+  let current: HTMLElement | null = element;
+  while (current) {
+    if (current.hidden || current.getAttribute("aria-hidden") === "true" ||
+        current.hasAttribute?.("inert") || current.style?.display === "none" ||
+        current.style?.visibility === "hidden") return false;
+    const style = view?.getComputedStyle(current);
+    if (style?.display === "none" || style?.visibility === "hidden") return false;
+    current = current.parentElement;
+  }
+  return true;
+}
+
+/** Own-profile evidence must name the positively identified session viewer. */
+export function isTiktokOwnProfile(url: string, handle: string): boolean {
+  if (!/^[\w.]{2,24}$/.test(handle)) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" &&
+      (parsed.hostname === "tiktok.com" || parsed.hostname.endsWith(".tiktok.com")) &&
+      parsed.pathname.replace(/\/$/, "").toLowerCase() === `/@${handle.toLowerCase()}`;
+  } catch { return false; }
+}
+
+export const TIKTOK_SCOPE_TAB_SELECTORS: Record<TiktokScope, readonly string[]> = {
+  tt_like: ['[data-e2e="liked-tab"]', '[data-e2e="user-liked-tab"]', '[data-e2e="user-tab-liked"]'],
+  tt_collect: ['[data-e2e="favorites-tab"]', '[data-e2e="user-favorites-tab"]', '[data-e2e="user-tab-favorites"]'],
+  tt_follow: [], tt_history: [],
+};
+const SCOPE_ROOT_SELECTORS: Record<TiktokScope, string> = {
+  tt_like: '[data-e2e="user-liked-item-list"], [data-e2e="liked-video-list"]',
+  tt_collect: '[data-e2e="user-favorites-item-list"], [data-e2e="favorite-video-list"]',
+  tt_follow: '[data-e2e="following-list"], [data-e2e="following-list-container"]',
+  tt_history: '[data-e2e="watch-history-list"], [data-e2e="history-video-list"]',
+};
+
+/** Require an identifiable active list; never use document/main/generic modal. */
+export function resolveTiktokScopeRoot(doc: Document, scope: TiktokScope): HTMLElement | null {
+  const roots = new Set<HTMLElement>(
+    Array.from(doc.querySelectorAll<HTMLElement>(SCOPE_ROOT_SELECTORS[scope])).filter(isTiktokElementVisible),
+  );
+  for (const selector of TIKTOK_SCOPE_TAB_SELECTORS[scope]) {
+    for (const tab of Array.from(doc.querySelectorAll<HTMLElement>(selector))) {
+      if (!isTiktokElementVisible(tab) || tab.getAttribute("aria-selected") !== "true") continue;
+      const panelId = tab.getAttribute("aria-controls");
+      const panel = panelId ? doc.getElementById(panelId) : null;
+      if (panel && panel.getAttribute("role") === "tabpanel" && isTiktokElementVisible(panel)) roots.add(panel);
+    }
+  }
+  const narrow = [...roots].filter((root) => ![...roots].some((other) => other !== root && root.contains(other)));
+  return narrow.length === 1 ? narrow[0]! : null;
 }

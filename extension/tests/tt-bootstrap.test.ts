@@ -74,3 +74,12 @@ test("extractTiktokLoginStateFromState fails closed without an explicit true", (
   assert.equal(extractTiktokLoginStateFromState(contradictory), false);
   assert.equal(extractTiktokLoginStateFromState(null), false);
 });
+
+
+test("viewed-author SSR state never establishes viewer or login", () => {
+  const author = { __DEFAULT_SCOPE__: { "webapp.user": {
+    isLogin: true, userInfo: { uniqueId: "someone.else", secUid: "author-id" },
+  } } };
+  assert.deepEqual(extractTiktokViewerFromState(author), { handle: "", secUid: "" });
+  assert.equal(extractTiktokLoginStateFromState(author), false);
+});

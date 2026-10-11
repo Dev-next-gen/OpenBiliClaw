@@ -4,6 +4,8 @@
 
 ## 未发布：TikTok 源后端缺口修复与前端展示面补全（issue #88）
 
+- TikTok full-source 验收修复：接通真实 bootstrap_profile 四 scope wire；限制本人列表、账号绑定与冻结预算；保留断网/超时 partial，整页导航恢复；普通 smoke 不写画像；收藏阻止 SPA 串视频。CLI 等待调整为 480 秒并同步后台标签页提示；补跨 Python/TypeScript 协议集成回归，账号真实 E2E 仍待浏览器连接恢复。
+
 ### 新增：TikTok full 升级收尾——契约测试反转与 audit 清零（2026-10-11）
 
 - `tests/test_tiktok_contract.py` 由「断言排除成立」整体改写为正向注册断言：`_PLATFORM_SOURCE_FIELDS` / 双 manifest content_scripts / `source_incremental_sync` 注册、native-save 不再是 local-only、guidedInit=true、dispatcher 任务标记与两阶段结果重投；契约登记的排除测试 `test_tiktok_engagement_danmaku_is_unavailable`（新建）与 `test_tiktok_media_deep_link_uses_https`（保留）精确存在并通过；移动端凭据排除保持正向「排除仍成立」。

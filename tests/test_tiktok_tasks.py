@@ -495,7 +495,8 @@ def _enqueue_tiktok_bootstrap_task(db: Database, payload: dict[str, object] | No
     queue = TiktokTaskQueue(db)
     task_id = queue.enqueue_with_id(
         "bootstrap_profile",
-        payload or {"scopes": ["tt_like", "tt_collect", "tt_history", "tt_follow"]},
+        payload
+        or {"scopes": ["tt_like", "tt_collect", "tt_history", "tt_follow"], "profile_update": True},
         daily_budget=10,
     )
     assert task_id is not None
@@ -547,6 +548,7 @@ def test_tiktok_bootstrap_task_result_records_events_and_completes(
         json={
             "task_id": task_id,
             "status": "ok",
+            "viewer_handle": "test_viewer",
             "videos": [
                 {
                     "scope": "tt_collect",
@@ -625,6 +627,7 @@ def test_tiktok_partial_then_degraded_preserves_items(
         json={
             "task_id": task_id,
             "status": "partial",
+            "viewer_handle": "test_viewer",
             "videos": [
                 {
                     "scope": "tt_collect",
@@ -646,6 +649,7 @@ def test_tiktok_partial_then_degraded_preserves_items(
         json={
             "task_id": task_id,
             "status": "degraded",
+            "viewer_handle": "test_viewer",
             "videos": [],
             "scope_counts": {"tt_collect": 1},
             "debug": {"degraded_reasons": ["tt_collect:pagination_incomplete"]},
@@ -661,3 +665,298 @@ def test_tiktok_partial_then_degraded_preserves_items(
     assert result["_openbiliclaw_terminal_status"] == "degraded"
     assert result["videos"][0]["video_id"] == "fav-first-page"
     assert [event["event_type"] for event in memory.events] == ["favorite"]
+
+
+def test_tiktok_result_cannot_expand_frozen_scopes_or_budget(database: Database) -> None:
+    queue = TiktokTaskQueue(database)
+    task_id = queue.enqueue_with_id(
+        "bootstrap_profile", {"scopes": ["tt_like"], "max_items_per_scope": 1}
+    )
+    assert task_id
+    queue.merge_result(task_id, videos=[{"scope": "tt_like", "video_id": "one", "title": "one"}])
+    queue.stage_final_result(
+        task_id,
+        terminal_status="ok",
+        videos=[
+            {"scope": "tt_like", "video_id": "two", "title": "two"},
+            {"scope": "tt_collect", "video_id": "three", "title": "three"},
+        ],
+        scope_counts={"tt_like": 9999, "tt_collect": 9999},
+    )
+    result = json.loads(queue.get(task_id)["result_json"])
+    assert [row["video_id"] for row in result["videos"]] == ["one"]
+    assert result["scope_counts"] == {"tt_like": 1}
+
+
+def test_tiktok_event_normalization_rejects_nested_identity_and_author() -> None:
+    events = tiktok_bootstrap_videos_to_events(
+        [
+            {"scope": "tt_like", "video_id": ["bad"], "title": None, "url": {}},
+            {"scope": "tt_like", "video_id": "good", "title": "video", "author": {"name": "bad"}},
+        ]
+    )
+    assert len(events) == 1
+    assert events[0]["metadata"].get("author", "") == ""
+
+
+def test_tiktok_account_binding_rejects_switch_and_keeps_first_result(database: Database) -> None:
+    queue = TiktokTaskQueue(database)
+    first = queue.enqueue_with_id("bootstrap_profile", {})
+    second = queue.enqueue_with_id("bootstrap_profile", {})
+    assert first and second
+    key = queue.bind_account(first, viewer_handle="alice", viewer_sec_uid="", profile_update=True)
+    assert key.startswith("sha256:")
+    with pytest.raises(ValueError, match="task_account_mismatch"):
+        queue.bind_account(first, viewer_handle="bob", viewer_sec_uid="", profile_update=True)
+    with pytest.raises(ValueError, match="account_switch_requires_reset"):
+        queue.bind_account(second, viewer_handle="bob", viewer_sec_uid="", profile_update=True)
+    queue.stage_final_result(first, terminal_status="ok")
+    assert (
+        queue.bind_account(first, viewer_handle="bob", viewer_sec_uid="", profile_update=True)
+        == key
+    )
+    assert json.loads(queue.get(first)["result_json"])["account_key"] == key
+
+
+def test_tiktok_smoke_task_never_projects_profile(
+    tiktok_task_client: tuple[Any, Database, _RecordingMemoryManager],
+) -> None:
+    client, db, memory = tiktok_task_client
+    task_id = _enqueue_tiktok_bootstrap_task(db, {"scopes": ["tt_like"], "profile_update": False})
+    response = client.post(
+        "/api/sources/tiktok/task-result",
+        json={
+            "task_id": task_id,
+            "status": "ok",
+            "viewer_handle": "test_viewer",
+            "videos": [{"scope": "tt_like", "video_id": "123456", "title": "test"}],
+        },
+    )
+    assert response.status_code == 200
+    assert memory.events == []
+    assert memory.load_source_bootstrap_state() == {}
+    assert (
+        db.conn.execute(
+            "SELECT 1 FROM auth_state WHERE key = 'tiktok_profile_account_key'"
+        ).fetchone()
+        is None
+    )
+
+
+def test_tiktok_result_rejects_missing_viewer_and_malformed_collection(
+    tiktok_task_client: tuple[Any, Database, _RecordingMemoryManager],
+) -> None:
+    client, db, memory = tiktok_task_client
+    task_id = _enqueue_tiktok_bootstrap_task(db)
+    assert (
+        client.post(
+            "/api/sources/tiktok/task-result",
+            json={
+                "task_id": task_id,
+                "status": "ok",
+                "videos": [],
+            },
+        ).status_code
+        == 409
+    )
+    assert (
+        client.post(
+            "/api/sources/tiktok/task-result",
+            json={
+                "task_id": task_id,
+                "status": "ok",
+                "videos": None,
+            },
+        ).status_code
+        == 422
+    )
+    assert memory.events == []
+
+
+@pytest.mark.parametrize(("row_count", "expected_status"), [(1, "ok"), (2, "degraded")])
+def test_real_tiktok_api_payload_executes_all_scopes_in_extension(
+    tiktok_task_client: tuple[Any, Database, _RecordingMemoryManager],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    row_count: int,
+    expected_status: str,
+) -> None:
+    """Cross-language boundary: Python next-task -> actual TS dispatcher -> API ingress.
+
+    Browser DOM responses are synthetic; this is a protocol integration test,
+    not a claim about authenticated TikTok pages.
+    """
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    from openbiliclaw.sources.source_bootstrap import enqueue_tiktok_bootstrap
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is required for the extension protocol integration")
+    client, db, memory = tiktok_task_client
+    monkeypatch.setenv("OPENBILICLAW_TIKTOK_BOOTSTRAP_MAX_ITEMS", "1")
+    queued = enqueue_tiktok_bootstrap(db, force=True)
+    assert queued.task_id
+    response = client.get("/api/sources/tiktok/next-task")
+    assert response.status_code == 200
+    root = Path(__file__).resolve().parents[1]
+    dispatcher = (root / "extension/src/background/tiktok-task-dispatcher.ts").as_uri()
+    mock = (root / "extension/tests/helpers/chrome-mock.ts").as_uri()
+    runner = tmp_path / "tiktok-protocol.mts"
+    runner.write_text(
+        "import { executeTask, handleTiktokScopeResult, resetTiktokTaskStateForTest, "
+        "computeTiktokTaskTimeoutMs } from "
+        f"{json.dumps(dispatcher)};\n"
+        f"import {{ installChromeMock }} from {json.dumps(mock)};\n"
+        'let input=""; for await (const chunk of process.stdin) input += chunk;\n'
+        "const task=JSON.parse(input); const state=installChromeMock();\n"
+        "try {\n"
+        '  console.log("OBC_DEADLINE="+computeTiktokTaskTimeoutMs(task));\n'
+        "  await executeTask(task);\n"
+        "  for (const scope of task.scopes) {\n"
+        '    await handleTiktokScopeResult({task_id:task.id, scope, status:"ok",\n'
+        '      viewer_handle:"test_viewer", scope_count:ROW_COUNT,'
+        "      items:Array.from({length:ROW_COUNT},(_,i)=>i+1).map(n=>({\n"
+        '        scope, video_id:scope==="tt_follow" ? "" : `${scope}${n}`,\n'
+        '        creator_sec_uid:scope==="tt_follow" ? `creator${n}` : "",\n'
+        '        author_handle:`creator${n}`, title:"Protocol fixture",\n'
+        "        url:`https://www.tiktok.com/@creator/video/123456${n}`,\n"
+        '        author:"creator", cover_url:""}))},42);\n'
+        "  }\n"
+        "  const posts=state.fetchCalls"
+        '.filter(c=>c.url.endsWith("/tiktok/task-result")).map(c=>c.body);\n'
+        '  console.log("OBC_RESULT="+JSON.stringify(posts));\n'
+        "} finally { resetTiktokTaskStateForTest(); state.restore(); }\n"
+    )
+    runner.write_text(runner.read_text().replace("ROW_COUNT", str(row_count)))
+    completed = subprocess.run(
+        [node, "--experimental-strip-types", str(runner)],
+        input=json.dumps(response.json()),
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    from openbiliclaw.cli import _DEFAULT_TIKTOK_BOOTSTRAP_WAIT_SECONDS
+
+    deadline_line = next(
+        line for line in completed.stdout.splitlines() if line.startswith("OBC_DEADLINE=")
+    )
+    assert int(deadline_line.split("=")[1]) / 1000 + 60 < _DEFAULT_TIKTOK_BOOTSTRAP_WAIT_SECONDS
+    line = next(line for line in completed.stdout.splitlines() if line.startswith("OBC_RESULT="))
+    posts = json.loads(line.removeprefix("OBC_RESULT="))
+    assert posts and posts[-1]["status"] == expected_status
+    assert {row["scope"] for row in posts[-1]["videos"]} == set(response.json()["scopes"])
+    assert len(posts[-1]["videos"]) == 4  # cumulative frozen cap of one per scope
+    for payload in posts:
+        callback = client.post("/api/sources/tiktok/task-result", json=payload)
+        assert callback.status_code == 200, callback.text
+    assert TiktokTaskQueue(db).get(queued.task_id)["status"] == "completed"
+    assert {event["event_type"] for event in memory.events} == {
+        "like",
+        "favorite",
+        "view",
+        "follow",
+    }
+    assert len(memory.events) == 4
+
+
+def test_tiktok_failure_keeps_previously_accepted_rows(database: Database) -> None:
+    queue = TiktokTaskQueue(database)
+    task_id = queue.enqueue_with_id("bootstrap_profile", {})
+    assert task_id
+    rows = [{"scope": "tt_like", "video_id": "123456", "title": "accepted"}]
+    queue.merge_result(task_id, videos=rows)
+    queue.fail(task_id, error="account_changed")
+    result = json.loads(queue.get(task_id)["result_json"])
+    assert result["videos"] == rows
+    assert result["error"] == "account_changed"
+
+
+def test_tiktok_queue_does_not_use_mutable_titles_as_item_identity(database: Database) -> None:
+    queue = TiktokTaskQueue(database)
+    task_id = queue.enqueue_with_id("bootstrap_profile", {})
+    assert task_id
+    queue.merge_result(task_id, videos=[{"scope": "tt_like", "title": "missing ID"}])
+    assert json.loads(queue.get(task_id)["result_json"])["videos"] == []
+
+
+@pytest.mark.parametrize("initial_uid, next_uid", [("", "SEC_same_user"), ("SEC_same_user", "")])
+def test_tiktok_account_binding_survives_optional_uid_across_tasks(
+    database: Database, initial_uid: str, next_uid: str
+) -> None:
+    queue = TiktokTaskQueue(database)
+    first = queue.enqueue_with_id("bootstrap_profile", {})
+    second = queue.enqueue_with_id("bootstrap_profile", {})
+    assert first and second
+    expected = queue.bind_account(
+        first, viewer_handle="same_user", viewer_sec_uid=initial_uid, profile_update=True
+    )
+    assert (
+        queue.bind_account(
+            second, viewer_handle="same_user", viewer_sec_uid=next_uid, profile_update=True
+        )
+        == expected
+    )
+    uid_alias = database.conn.execute(
+        "SELECT value FROM auth_state WHERE key = 'tiktok_profile_sec_uid_key'"
+    ).fetchone()
+    assert uid_alias and str(uid_alias["value"]).startswith("sha256:")
+    assert "SEC_same_user" not in str(queue.get(second)["result_json"])
+    # Learning an optional identity must still reject actual secUid conflicts.
+    third = queue.enqueue_with_id("bootstrap_profile", {})
+    assert third
+    with pytest.raises(ValueError, match="account_switch_requires_reset"):
+        queue.bind_account(
+            third, viewer_handle="same_user", viewer_sec_uid="SEC_different", profile_update=True
+        )
+
+
+def test_tiktok_task_uid_alias_survives_merges_and_missing_uid(database: Database) -> None:
+    queue = TiktokTaskQueue(database)
+    task_id = queue.enqueue_with_id("bootstrap_profile", {})
+    assert task_id
+    key = queue.bind_account(
+        task_id, viewer_handle="same_user", viewer_sec_uid="SEC_same_user", profile_update=False
+    )
+    queue.merge_result(task_id, videos=[])
+    assert (
+        queue.bind_account(
+            task_id, viewer_handle="same_user", viewer_sec_uid="", profile_update=False
+        )
+        == key
+    )
+    with pytest.raises(ValueError, match="task_account_mismatch"):
+        queue.bind_account(
+            task_id, viewer_handle="same_user", viewer_sec_uid="SEC_different", profile_update=False
+        )
+
+
+@pytest.mark.parametrize("clip_in_partial", [False, True])
+def test_tiktok_clipped_result_stages_degraded_atomically_and_stays_immutable(
+    database: Database, clip_in_partial: bool
+) -> None:
+    queue = TiktokTaskQueue(database)
+    task_id = queue.enqueue_with_id(
+        "bootstrap_profile", {"scopes": ["tt_like"], "max_items_per_scope": 1}
+    )
+    assert task_id
+    videos = [
+        {"scope": "tt_like", "video_id": "123456", "title": "first"},
+        {"scope": "tt_like", "video_id": "123457", "title": "over cap"},
+    ]
+    if clip_in_partial:
+        queue.merge_result(task_id, videos=videos)
+        videos = []
+    canonical = queue.stage_final_result(task_id, terminal_status="ok", videos=videos)
+    assert canonical["status"] == "degraded"
+    assert canonical["_openbiliclaw_terminal_status"] == "degraded"
+    assert canonical["scope_counts"] == {"tt_like": 1}
+    # No terminal flip before event ingress repair; first frozen payload wins.
+    assert queue.get(task_id)["status"] == "pending"
+    assert queue.stage_final_result(task_id, terminal_status="ok", videos=[]) == canonical
+    assert queue.complete_staged_result(task_id)
+    assert json.loads(queue.get(task_id)["result_json"]) == canonical

@@ -48,15 +48,11 @@ function getNestedBool(state: unknown, path: string[]): boolean | null {
 const USER_OBJECT_PATHS: readonly string[][] = [
   ["__DEFAULT_SCOPE__", "webapp.user-context", "user"],
   ["webapp.user-context", "user"],
-  ["__DEFAULT_SCOPE__", "webapp.user", "userInfo"],
-  ["webapp.user", "userInfo"],
 ];
 
 const LOGIN_FLAG_PATHS: readonly string[][] = [
   ["__DEFAULT_SCOPE__", "webapp.user-context", "isLoggedIn"],
   ["webapp.user-context", "isLoggedIn"],
-  ["__DEFAULT_SCOPE__", "webapp.user", "isLogin"],
-  ["webapp.user", "isLogin"],
 ];
 
 export interface TiktokViewerIdentity {

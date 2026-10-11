@@ -3,9 +3,8 @@
  * bootstrap tasks (tt_like / tt_collect / tt_history / tt_follow).
  *
  * Mirrors dy-task-dispatcher.ts structurally but is deliberately
- * slimmer: one backend task carries exactly one scope
- * (GET /api/sources/tiktok/next-task → 200 {id, type, payload} where
- * ``type`` IS the scope), and collection is DOM-only — no MAIN-world
+ * one backend bootstrap_profile task carries a frozen scopes[] list
+ * and max_items_per_scope; its scopes execute sequentially in one owned tab, and collection is DOM-only — no MAIN-world
  * fetch-tap, no request signing (contract
  * docs/platform-source-contract.tiktok.toml: extension.task =
  * "browser-task", background = true).
@@ -29,7 +28,6 @@
  */
 
 import {
-  finalizeTiktokTaskStatus,
   TIKTOK_SCOPES,
   type TiktokBootstrapItem,
   type TiktokScope,
@@ -60,6 +58,8 @@ const DEFAULT_POLL_INTERVAL_MS = 60_000;
 const BASE_TIMEOUT_MS = 30_000;
 const PER_ROUND_TIMEOUT_MS = 3_000;
 const MAX_TASK_TIMEOUT_MS = 360_000;
+const TASK_IDLE_TIMEOUT_MS = 120_000;
+const TIKTOK_CONTENT_SCOPE_KEY = "openbiliclaw_tiktok_content_scope_v1";
 const POLL_ALARM_NAME = "openbiliclaw-tiktok-task-poll";
 const TASK_TIMEOUT_ALARM_NAME = "openbiliclaw-tiktok-task-timeout";
 export const TIKTOK_TASK_STATE_SESSION_KEY = "openbiliclaw_tiktok_active_task";
@@ -89,7 +89,18 @@ export interface TiktokScopeTask {
   };
 }
 
-export type TiktokTask = TiktokScopeTask | NativeSaveTask;
+/** Exact next-task shape emitted by enqueue_tiktok_bootstrap. */
+export interface TiktokBootstrapTask {
+  id: string;
+  type: "bootstrap_profile";
+  scopes: TiktokScope[];
+  max_items_per_scope: number;
+  max_scroll_rounds: number;
+  max_stagnant_scroll_rounds?: number;
+}
+
+type TiktokAccountTask = TiktokScopeTask | TiktokBootstrapTask;
+export type TiktokTask = TiktokAccountTask | NativeSaveTask;
 
 export interface TiktokTaskResult {
   task_id: string;
@@ -98,6 +109,8 @@ export interface TiktokTaskResult {
   scope_counts?: Record<string, number>;
   error?: string;
   debug?: Record<string, unknown>;
+  viewer_handle?: string;
+  viewer_sec_uid?: string;
 }
 
 export type TiktokTaskCallbackResult = TiktokTaskResult | NativeSaveResult;
@@ -120,6 +133,15 @@ export function isValidTiktokTask(task: unknown): task is TiktokTask {
   if (typeof task !== "object" || task === null) return false;
   const t = task as Record<string, unknown>;
   if (typeof t.id !== "string" || !t.id) return false;
+  if (t.type === "bootstrap_profile") {
+    return Array.isArray(t.scopes) && t.scopes.length > 0 &&
+      t.scopes.length <= TIKTOK_SCOPES.length && new Set(t.scopes).size === t.scopes.length &&
+      t.scopes.every((scope) => TIKTOK_SCOPES.includes(scope as TiktokScope)) &&
+      typeof t.max_items_per_scope === "number" && Number.isInteger(t.max_items_per_scope) &&
+      t.max_items_per_scope > 0 && typeof t.max_scroll_rounds === "number" &&
+      Number.isInteger(t.max_scroll_rounds) && t.max_scroll_rounds >= 0 &&
+      isValidLimitField(t.max_stagnant_scroll_rounds);
+  }
   if (!TIKTOK_SCOPES.includes(t.type as TiktokScope)) return false;
   for (const key of ["max_items", "max_scroll_rounds", "max_stagnant_scroll_rounds"]) {
     if (!isValidLimitField(t[key])) return false;
@@ -149,7 +171,23 @@ export function buildTiktokTaskUrl(task: TiktokTask): string {
   return withTaskTabMarker("https://www.tiktok.com/", TIKTOK_TASK_MARKER);
 }
 
-export function computeTiktokTaskTimeoutMs(task: TiktokScopeTask): number {
+function taskScopes(task: TiktokAccountTask): TiktokScope[] {
+  return task.type === "bootstrap_profile" ? task.scopes : [task.type];
+}
+
+function scopeTask(task: TiktokAccountTask, scope: TiktokScope): TiktokScopeTask {
+  return task.type === "bootstrap_profile"
+    ? { id: task.id, type: scope, max_items: task.max_items_per_scope,
+      max_scroll_rounds: task.max_scroll_rounds,
+      max_stagnant_scroll_rounds: task.max_stagnant_scroll_rounds }
+    : task;
+}
+
+export function computeTiktokTaskTimeoutMs(task: TiktokAccountTask): number {
+  if (task.type === "bootstrap_profile") {
+    return Math.min(MAX_TASK_TIMEOUT_MS,
+      task.scopes.length * computeTiktokTaskTimeoutMs(scopeTask(task, task.scopes[0])));
+  }
   const rounds = taskLimit(task, "max_scroll_rounds");
   const scrollBudget = rounds === undefined ? 0 : Math.max(0, Math.floor(rounds));
   return Math.min(
@@ -162,7 +200,7 @@ export function buildTiktokExecuteMessageData(task: TiktokScopeTask): Record<str
   return {
     task_id: task.id,
     scope: task.type,
-    max_items: taskLimit(task, "max_items") ?? DEFAULT_MAX_ITEMS,
+    max_items: Math.min(DEFAULT_MAX_ITEMS, Math.max(1, Math.floor(taskLimit(task, "max_items") ?? DEFAULT_MAX_ITEMS))),
     max_scroll_rounds: taskLimit(task, "max_scroll_rounds") ?? DEFAULT_SCROLL_ROUNDS,
     max_stagnant_scroll_rounds:
       taskLimit(task, "max_stagnant_scroll_rounds") ?? DEFAULT_STAGNANT_ROUNDS,
@@ -179,7 +217,11 @@ let taskTabId: number | null = null;
 let ownsTaskTab = false;
 let taskTimeoutId: ReturnType<typeof setTimeout> | null = null;
 let taskDeadlineMs: number | null = null;
-let currentTask: TiktokScopeTask | null = null;
+let taskIdleDeadlineMs: number | null = null;
+let currentTask: TiktokAccountTask | null = null;
+let scopeResults: Partial<Record<TiktokScope, TiktokScopeResult>> = {};
+let scopeResultMutation: Promise<void> = Promise.resolve();
+let failureInFlight: Promise<void> | null = null;
 
 interface TaskProgress {
   task_id: string;
@@ -260,8 +302,8 @@ function localStorageArea(): chrome.storage.StorageArea | null {
 }
 
 /**
- * The pending slot holds the exact canonical JSON body of the latest
- * unacknowledged task-result callback. Persisted BEFORE the POST so a
+ * The pending slot holds the exact canonical JSON body of the oldest
+ * unacknowledged task-result callback and a FIFO tail. Persisted BEFORE the POST so a
  * worker death between persist and POST still replays the payload on
  * the next wake. Cleared on a 2xx ACK or an explicit 4xx terminal
  * rejection (retrying an identical body cannot change a client error).
@@ -271,6 +313,8 @@ function localStorageArea(): chrome.storage.StorageArea | null {
 export interface PendingTiktokTaskResult {
   body: string;
   queued_at_ms: number;
+  /** FIFO tail; migration accepts the former single-record shape. */
+  following?: PendingTiktokTaskResult[];
 }
 
 async function readPendingResult(): Promise<PendingTiktokTaskResult | null> {
@@ -285,37 +329,53 @@ async function readPendingResult(): Promise<PendingTiktokTaskResult | null> {
     if (typeof record.body !== "string" || !record.body) return null;
     return {
       body: record.body,
+      following: Array.isArray(record.following)
+        ? record.following.filter((entry): entry is PendingTiktokTaskResult =>
+          !!entry && typeof entry.body === "string" && !!entry.body)
+        : [],
       queued_at_ms:
         typeof record.queued_at_ms === "number" && Number.isFinite(record.queued_at_ms)
           ? record.queued_at_ms
           : 0,
     };
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error("tiktok_result_storage_read_failed", { cause: error });
   }
 }
 
-async function writePendingResult(body: string): Promise<void> {
-  const storage = localStorageArea();
-  if (!storage) return;
-  try {
-    await storage.set({
-      [TIKTOK_PENDING_RESULT_LOCAL_KEY]: { body, queued_at_ms: Date.now() },
-    });
-  } catch {
-    // Pending persistence is the durability layer; a transient storage
-    // failure degrades to in-memory retry, never to dropping the POST.
-  }
+let resultDelivery: Promise<void> = Promise.resolve();
+
+function serializeResultDelivery(operation: () => Promise<void>): Promise<void> {
+  const running = resultDelivery.then(operation, operation);
+  resultDelivery = running.catch(() => {});
+  return running;
 }
 
-async function clearPendingResult(): Promise<void> {
+async function savePendingQueue(queue: PendingTiktokTaskResult[]): Promise<void> {
   const storage = localStorageArea();
-  if (!storage) return;
-  try {
-    await storage.remove(TIKTOK_PENDING_RESULT_LOCAL_KEY);
-  } catch {
-    // Best-effort; a stale slot is replayed idempotently (backend
-    // first-final-wins), so a failed clear is safe.
+  if (!storage) throw new Error("tiktok_result_storage_unavailable");
+  // A storage failure must stop lifecycle progress: RAM is not a durable ACK.
+  if (!queue.length) await storage.remove(TIKTOK_PENDING_RESULT_LOCAL_KEY);
+  else await storage.set({ [TIKTOK_PENDING_RESULT_LOCAL_KEY]: {
+    ...queue[0], following: queue.slice(1).map(({ body, queued_at_ms }) => ({ body, queued_at_ms })),
+  } });
+}
+
+async function pendingQueue(): Promise<PendingTiktokTaskResult[]> {
+  const head = await readPendingResult();
+  if (!head) return [];
+  return [head, ...(head.following ?? [])].map(({ body, queued_at_ms }) => ({ body, queued_at_ms }));
+}
+
+async function drainPendingQueue(
+  transport: TiktokTaskResultTransport,
+  options: TiktokTaskResultRetryOptions,
+): Promise<void> {
+  const queue = await pendingQueue();
+  while (queue.length) {
+    await postRawTaskResult(queue[0].body, transport, options);
+    queue.shift();
+    await savePendingQueue(queue);
   }
 }
 
@@ -348,7 +408,7 @@ async function postRawTaskResult(
         },
       );
       if (response.ok) return "acked";
-      if (response.status >= 400 && response.status < 500) {
+      if (response.status === 409 || response.status === 422) {
         // Explicit terminal rejection — the backend refused this exact
         // canonical payload; bounded retries cannot change that.
         return "rejected";
@@ -380,26 +440,28 @@ export async function postTiktokTaskResult(
   transport: TiktokTaskResultTransport = TIKTOK_TASK_RESULT_TRANSPORT,
   options: TiktokTaskResultRetryOptions = {},
 ): Promise<void> {
-  const body = JSON.stringify(result);
-  await writePendingResult(body);
-  const outcome = await postRawTaskResult(body, transport, options);
-  if (outcome === "acked" || outcome === "rejected") {
-    await clearPendingResult();
-  }
+  return serializeResultDelivery(async () => {
+    const body = JSON.stringify(result);
+    const queue = await pendingQueue();
+    if (!queue.some((entry) => entry.body === body)) {
+      queue.push({ body, queued_at_ms: Date.now() });
+      await savePendingQueue(queue);
+    }
+    await drainPendingQueue(transport, options);
+  });
 }
 
-/** Flush the pending slot. Called on worker wake and before each claim. */
+/** Retry the entire FIFO on every wake, before admitting another task. */
 export async function flushPendingTiktokTaskResult(
   transport: TiktokTaskResultTransport = TIKTOK_TASK_RESULT_TRANSPORT,
 ): Promise<void> {
-  const pending = await readPendingResult();
-  if (!pending) return;
-  try {
-    const outcome = await postRawTaskResult(pending.body, transport, { maxAttempts: 1 });
-    if (outcome === "acked" || outcome === "rejected") await clearPendingResult();
-  } catch {
-    // Still unacknowledged — the slot stays for the next wake.
-  }
+  await serializeResultDelivery(async () => {
+    try {
+      await drainPendingQueue(transport, { maxAttempts: 1 });
+    } catch {
+      // Persisted FIFO remains authoritative, including the unsent terminal.
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -407,10 +469,13 @@ export async function flushPendingTiktokTaskResult(
 // ---------------------------------------------------------------------------
 
 export interface PersistedTiktokTaskState {
-  task: TiktokScopeTask;
+  task: TiktokAccountTask;
+  scope_results?: Partial<Record<TiktokScope, TiktokScopeResult>>;
   task_tab_id: number | null;
   owns_task_tab: boolean;
   deadline_ms: number;
+  /** Missing old records migrate to their original absolute deadline. */
+  idle_deadline_ms?: number;
   progress: TaskProgress | null;
 }
 
@@ -419,7 +484,7 @@ let tiktokTaskRecoveryPromise: Promise<void> | null = null;
 
 function sessionStorageArea(): chrome.storage.StorageArea | null {
   try {
-    return typeof chrome === "undefined" ? null : chrome.storage?.session ?? null;
+    return typeof chrome === "undefined" ? null : chrome.storage?.session ?? chrome.storage?.local ?? null;
   } catch {
     return null;
   }
@@ -437,16 +502,14 @@ function persistActiveTaskState(): Promise<void> {
     if (!storage || !currentTask) return;
     const record: PersistedTiktokTaskState = {
       task: currentTask,
+      scope_results: scopeResults,
       task_tab_id: taskTabId,
       owns_task_tab: ownsTaskTab,
       deadline_ms: taskDeadlineMs ?? 0,
+      idle_deadline_ms: taskIdleDeadlineMs ?? taskDeadlineMs ?? 0,
       progress,
     };
-    try {
-      await storage.set({ [TIKTOK_TASK_STATE_SESSION_KEY]: record });
-    } catch {
-      // Session persistence is an optional recovery enhancement.
-    }
+    await storage.set({ [TIKTOK_TASK_STATE_SESSION_KEY]: record });
   });
 }
 
@@ -477,16 +540,19 @@ function parsePersistedTaskState(value: unknown): PersistedTiktokTaskState | nul
     if (
       typeof progressRecord !== "object" ||
       (progressRecord as { task_id?: unknown }).task_id !== task.id ||
-      (progressRecord as { scope?: unknown }).scope !== task.type
+      !taskScopes(task).includes((progressRecord as { scope?: TiktokScope }).scope as TiktokScope)
     ) {
       return null;
     }
   }
   return {
     task,
+    scope_results: record.scope_results as Partial<Record<TiktokScope, TiktokScopeResult>> | undefined,
     task_tab_id: tabId,
     owns_task_tab: record.owns_task_tab === true,
     deadline_ms: record.deadline_ms,
+    idle_deadline_ms: typeof record.idle_deadline_ms === "number" && Number.isFinite(record.idle_deadline_ms)
+      ? Math.min(record.idle_deadline_ms, record.deadline_ms) : record.deadline_ms,
     progress: (progressRecord as TaskProgress | null) ?? null,
   };
 }
@@ -505,32 +571,68 @@ function armTaskDeadline(deadlineMs: number): void {
   // The one-shot alarm is the authoritative backstop: it survives the
   // service worker being unloaded. The setTimeout below is only the
   // exact-timing fast path while this worker stays alive.
-  scheduleTaskTimeoutAlarm(deadlineMs);
+  const nextDeadline = Math.min(deadlineMs, taskIdleDeadlineMs ?? deadlineMs);
+  scheduleTaskTimeoutAlarm(nextDeadline);
   if (taskTimeoutId !== null) {
     clearTimeout(taskTimeoutId);
     taskTimeoutId = null;
   }
   taskTimeoutId = setTimeout(() => {
     taskTimeoutId = null;
-    void failActiveTask("task_timeout");
-  }, Math.max(0, deadlineMs - Date.now()));
+    void failActiveTask(deadlineError());
+  }, Math.max(0, nextDeadline - Date.now()));
 }
 
-async function failActiveTask(error: string): Promise<void> {
-  const task = currentTask;
-  if (!task) return;
+function deadlineError(): string {
+  return taskDeadlineMs !== null && Date.now() >= taskDeadlineMs ? "task_timeout" : "task_idle_timeout";
+}
+
+function markBusinessProgress(): void {
+  if (taskDeadlineMs === null) return;
+  taskIdleDeadlineMs = Math.min(taskDeadlineMs, Date.now() + TASK_IDLE_TIMEOUT_MS);
+  armTaskDeadline(taskDeadlineMs);
+}
+
+async function checkpointRowsBeforeFailure(task: TiktokAccountTask): Promise<void> {
+  if (!progress || scopeResults[progress.scope]) return;
   try {
-    await postTiktokTaskResult({
-      task_id: task.id,
-      status: "failed",
-      error,
-    });
-    cleanupTask();
-  } catch {
-    // Keep local task state intact after an unacknowledged terminal
-    // callback; the pending slot plus the timeout alarm retry delivery
-    // on the next wake instead of pretending the task was durably failed.
-  }
+    const storage = localStorageArea();
+    if (!storage) return;
+    const raw = (await storage.get(TIKTOK_CONTENT_SCOPE_KEY))[TIKTOK_CONTENT_SCOPE_KEY] as {
+      message?: { task_id?: string; scope?: TiktokScope };
+      accepted_items?: TiktokBootstrapItem[];
+      viewer_handle?: string; viewer_sec_uid?: string;
+    } | undefined;
+    if (!raw || raw.message?.task_id !== task.id || raw.message.scope !== progress.scope ||
+        !Array.isArray(raw.accepted_items) || !raw.accepted_items.length || !raw.viewer_handle) return;
+    const identity = accountIdentity();
+    if ((identity.viewer_handle && identity.viewer_handle.toLowerCase() !== raw.viewer_handle.toLowerCase()) ||
+        (identity.viewer_sec_uid && raw.viewer_sec_uid && identity.viewer_sec_uid !== raw.viewer_sec_uid)) return;
+    scopeResults[progress.scope] = boundedScopeResult({
+      task_id: task.id, scope: progress.scope, status: "degraded", error: "scope_interrupted",
+      items: raw.accepted_items, scope_count: raw.accepted_items.length,
+      viewer_handle: raw.viewer_handle, ...(raw.viewer_sec_uid ? { viewer_sec_uid: raw.viewer_sec_uid } : {}),
+    }, progress);
+    await persistActiveTaskState();
+  } catch { /* Previously accepted dispatcher rows remain available in its snapshot. */ }
+}
+
+function failActiveTask(error: string): Promise<void> {
+  if (failureInFlight) return failureInFlight;
+  const running = (async () => {
+    const task = currentTask;
+    if (!task) return;
+    try {
+      await checkpointRowsBeforeFailure(task);
+      await postTiktokTaskResult(accountResult(task, error));
+      await cleanupTask();
+    } catch {
+      // Keep lifecycle and the durable FIFO until another wake retries it.
+    }
+  })();
+  failureInFlight = running;
+  void running.finally(() => { if (failureInFlight === running) failureInFlight = null; });
+  return running;
 }
 
 async function recordedTabAlive(tabId: number | null): Promise<boolean> {
@@ -549,17 +651,23 @@ async function restorePersistedTaskState(record: PersistedTiktokTaskState): Prom
   taskTabId = tabAlive ? record.task_tab_id : null;
   ownsTaskTab = record.owns_task_tab && tabAlive;
   progress = record.progress;
+  scopeResults = record.scope_results ?? {};
   taskInFlight = true;
   tryAcquireDispatcherMutex(MUTEX_LABEL);
+  taskIdleDeadlineMs = record.idle_deadline_ms ?? record.deadline_ms;
   armTaskDeadline(record.deadline_ms);
-  if (Date.now() >= record.deadline_ms) {
-    await failActiveTask("task_timeout");
+  if (Date.now() >= Math.min(record.deadline_ms, taskIdleDeadlineMs)) {
+    await failActiveTask(deadlineError());
     return;
   }
   if (record.owns_task_tab && !tabAlive) {
     // The task tab is gone; nothing can deliver further results, so
     // settle immediately instead of burning the remaining deadline.
     await failActiveTask("task_tab_closed");
+  } else if (progress && scopeResults[progress.scope]) {
+    await continueAccountTask();
+  } else if (tabAlive) {
+    sendScopeExecuteMessage();
   }
 }
 
@@ -621,22 +729,29 @@ export function resetTiktokTaskStateForTest(): void {
     taskTimeoutId = null;
   }
   taskDeadlineMs = null;
+  taskIdleDeadlineMs = null;
   taskTabId = null;
   ownsTaskTab = false;
   currentTask = null;
+  scopeResults = {};
   progress = null;
   taskInFlight = false;
   tiktokTaskRecoveryPromise = null;
+  scopeResultMutation = Promise.resolve();
+  failureInFlight = null;
+  resultDelivery = Promise.resolve();
   sessionStateMutation = Promise.resolve();
   releaseDispatcherMutex(MUTEX_LABEL);
 }
 
-function cleanupTask(): void {
+async function cleanupTask(): Promise<void> {
+  const completedTaskId = currentTask?.id;
   if (taskTimeoutId !== null) {
     clearTimeout(taskTimeoutId);
     taskTimeoutId = null;
   }
   taskDeadlineMs = null;
+  taskIdleDeadlineMs = null;
   if (typeof chrome !== "undefined" && chrome.alarms?.clear) {
     try {
       void chrome.alarms.clear(TASK_TIMEOUT_ALARM_NAME);
@@ -646,23 +761,35 @@ function cleanupTask(): void {
   }
   if (ownsTaskTab && taskTabId !== null) {
     try {
-      void chrome.tabs.remove(taskTabId);
+      await chrome.tabs.remove(taskTabId);
     } catch {
       // Tab may already be closed; ignore.
     }
   }
+  if (completedTaskId) {
+    try {
+      const storage = localStorageArea();
+      const record = storage ? (await storage.get(TIKTOK_CONTENT_SCOPE_KEY))[TIKTOK_CONTENT_SCOPE_KEY] as
+        { message?: { task_id?: string } } | undefined : undefined;
+      if (record?.message?.task_id === completedTaskId) await storage!.remove(TIKTOK_CONTENT_SCOPE_KEY);
+    } catch { /* Bounded content checkpoint expiry remains the fallback. */ }
+  }
+  await clearPersistedTaskState();
   taskTabId = null;
   ownsTaskTab = false;
   currentTask = null;
+  scopeResults = {};
   progress = null;
   taskInFlight = false;
   releaseDispatcherMutex(MUTEX_LABEL);
-  void clearPersistedTaskState();
 }
 
-function armTaskTimeout(task: TiktokScopeTask): void {
-  armTaskDeadline(Date.now() + computeTiktokTaskTimeoutMs(task));
-  void persistActiveTaskState();
+function armTaskTimeout(task: TiktokAccountTask): void {
+  const now = Date.now();
+  const absoluteDeadline = now + computeTiktokTaskTimeoutMs(task);
+  taskIdleDeadlineMs = Math.min(absoluteDeadline, now + TASK_IDLE_TIMEOUT_MS);
+  armTaskDeadline(absoluteDeadline);
+  void persistActiveTaskState().catch(() => { void failActiveTask("task_state_persist_failed"); });
 }
 
 // ---------------------------------------------------------------------------
@@ -723,6 +850,7 @@ export function onTabReady(
  */
 function sendScopeExecuteMessage(): void {
   if (!progress || taskTabId === null) return;
+  const sent = progress;
   void chrome.tabs
     .sendMessage(taskTabId, {
       action: "TIKTOK_SCOPE_EXECUTE",
@@ -736,8 +864,8 @@ function sendScopeExecuteMessage(): void {
     })
     .catch(() => {
       void handleTiktokScopeResult({
-        task_id: progress!.task_id,
-        scope: progress!.scope,
+        task_id: sent.task_id,
+        scope: sent.scope,
         items: [],
         scope_count: 0,
         status: "failed",
@@ -748,7 +876,7 @@ function sendScopeExecuteMessage(): void {
 
 export interface TiktokNativeSaveResultTransport {
   resolveUrl: (path: string) => Promise<string>;
-  fetch: (input: string, init: RequestInit) => Promise<unknown>;
+  fetch: (input: string, init: RequestInit) => Promise<TiktokTaskResultResponse>;
 }
 
 const TIKTOK_NATIVE_SAVE_RESULT_TRANSPORT: TiktokNativeSaveResultTransport = {
@@ -760,15 +888,8 @@ export async function postTiktokNativeSaveResult(
   result: NativeSaveResult,
   transport: TiktokNativeSaveResultTransport = TIKTOK_NATIVE_SAVE_RESULT_TRANSPORT,
 ): Promise<void> {
-  try {
-    await transport.fetch(await transport.resolveUrl("/sources/tiktok/task-result"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(result),
-    });
-  } catch {
-    // Backend transient unavailability should not crash the service worker.
-  }
+  // Shared runner sees a real ACK/error; an HTTP failure is never success.
+  await postTiktokTaskResult(result, { ...transport, sleep: delay });
 }
 
 export interface TiktokNativeSaveDispatchDependencies {
@@ -816,14 +937,8 @@ export async function executeTask(
   taskInFlight = true;
   currentTask = task;
 
-  const messageData = buildTiktokExecuteMessageData(task);
-  progress = {
-    task_id: task.id,
-    scope: task.type,
-    max_items: messageData.max_items as number,
-    max_scroll_rounds: messageData.max_scroll_rounds as number,
-    max_stagnant_scroll_rounds: messageData.max_stagnant_scroll_rounds as number,
-  };
+  scopeResults = {};
+  setScopeProgress(task, taskScopes(task)[0]);
 
   // Contract extension.background = true: account tasks run in a
   // background tab, never stealing browser focus.
@@ -838,7 +953,7 @@ export async function executeTask(
       error: "tab_create_failed",
       debug: { tab_create_error: String(err) },
     });
-    cleanupTask();
+    await cleanupTask();
     return "accepted";
   }
   taskTabId = tab.id ?? null;
@@ -850,62 +965,126 @@ export async function executeTask(
       status: "failed",
       error: "tab_id_unknown",
     });
-    cleanupTask();
+    await cleanupTask();
     return "accepted";
   }
   onTabReady(taskTabId, sendScopeExecuteMessage, { fallbackMs: 12_000 });
   return "accepted";
 }
 
-/**
- * Scope result from the content script. Two-stage staged completion
- * mirroring dy: post the rows as a partial so the backend propagates
- * them incrementally, then the terminal callback. A failed scope skips
- * the partial and finalises as failed immediately (login walls and
- * logged-out tabs are explicit failures, never valid-empty).
- */
-export async function handleTiktokScopeResult(result: TiktokScopeResult): Promise<void> {
-  await ensureTiktokTaskRecovery();
-  if (!progress || result.task_id !== progress.task_id) return;
-  if (result.scope !== progress.scope) return;
+function setScopeProgress(task: TiktokAccountTask, scope: TiktokScope): void {
+  progress = buildTiktokExecuteMessageData(scopeTask(task, scope)) as unknown as TaskProgress;
+}
 
-  if (result.status === "failed") {
-    await postTiktokTaskResult({
-      task_id: progress.task_id,
-      status: "failed",
-      error: result.error || "scope_failed",
-      debug: {
-        scope: result.scope,
-        ...(result.debug ?? {}),
-      },
-    });
-    cleanupTask();
+function accountResult(task: TiktokAccountTask, error?: string): TiktokTaskResult {
+  const scopes = taskScopes(task);
+  const results = scopes.map((scope) => scopeResults[scope]);
+  const videos = results.flatMap((result) => result?.items ?? []);
+  const complete = !error && results.every((result) => result &&
+    (result.status === "ok" || result.status === "empty"));
+  return {
+    task_id: task.id,
+    ...accountIdentity(),
+    status: complete ? "ok" : videos.length ? "degraded" : "failed",
+    videos,
+    scope_counts: Object.fromEntries(scopes.map((scope) => [scope, scopeResults[scope]?.items.length ?? 0])),
+    ...(!complete ? { error: error || results.find((result) => result?.error)?.error || "scope_failed" } : {}),
+    debug: {
+      scope_statuses: Object.fromEntries(scopes.map((scope) => [scope, scopeResults[scope]?.status ?? "failed"])),
+      scope_complete: Object.fromEntries(scopes.map((scope) => [scope,
+        ["ok", "empty"].includes(scopeResults[scope]?.status ?? "")])),
+      scope_errors: Object.fromEntries(scopes.map((scope) => [scope, scopeResults[scope]?.error ?? error ?? ""])),
+    },
+  };
+}
+
+function accountIdentity(): { viewer_handle?: string; viewer_sec_uid?: string } {
+  // Pin one representation at first projected scope. A later SSR-only uid
+  // must not change the backend account partition after handle-only binding.
+  const first = Object.values(scopeResults).find((result) => result?.status !== "failed" && result?.viewer_handle);
+  return first ? { viewer_handle: first.viewer_handle,
+    ...(first.viewer_sec_uid ? { viewer_sec_uid: first.viewer_sec_uid } : {}) } : {};
+}
+
+/** Freeze only accepted scope rows; callback counts cannot enlarge the claim. */
+function boundedScopeResult(result: TiktokScopeResult, claim: TaskProgress): TiktokScopeResult {
+  const seen = new Set<string>();
+  const items = (Array.isArray(result.items) ? result.items : []).filter((item) => {
+    if (!item || item.scope !== claim.scope) return false;
+    const id = claim.scope === "tt_follow" ? item.author_handle : item.video_id;
+    if (!id || typeof id !== "string" || seen.has(id) || seen.size >= claim.max_items) return false;
+    seen.add(id);
+    return true;
+  });
+  const clipped = items.length < (Array.isArray(result.items) ? result.items.length : 0);
+  return { ...result, items, scope_count: items.length,
+    status: clipped || (result.status === "failed" && items.length) ? "degraded" : result.status,
+    ...(clipped ? { error: "scope_rows_outside_claim" } : {}),
+  };
+}
+
+async function continueAccountTask(): Promise<void> {
+  const task = currentTask;
+  if (!task) return;
+  const next = taskScopes(task).find((scope) => !scopeResults[scope]);
+  if (!next) {
+    // Final carries the full immutable aggregate, so backend recovery never
+    // depends on an earlier partial callback having arrived.
+    await postTiktokTaskResult(accountResult(task));
+    await cleanupTask();
     return;
   }
+  setScopeProgress(task, next);
+  await persistActiveTaskState();
+  if (taskTabId === null) {
+    await failActiveTask("task_tab_closed");
+    return;
+  }
+  try {
+    // Clear previous profile tab/modal without touching any user's tab.
+    await chrome.tabs.update(taskTabId, { url: buildTiktokTaskUrl(task) });
+    onTabReady(taskTabId, sendScopeExecuteMessage, { fallbackMs: 12_000 });
+  } catch {
+    await failActiveTask("scope_navigation_failed");
+  }
+}
 
-  await postTiktokTaskResult({
-    task_id: progress.task_id,
-    status: "partial",
-    videos: result.items,
-    scope_counts: { [result.scope]: result.scope_count },
-    debug: {
-      scope: result.scope,
-      scope_status: result.status,
-      ...(result.debug ?? {}),
-    },
+/** Serialize scope completions, preserving rows across failures and worker wakes. */
+export function handleTiktokScopeResult(result: TiktokScopeResult, senderTabId?: number): Promise<void> {
+  const running = scopeResultMutation.then(async () => {
+    await ensureTiktokTaskRecovery();
+    // Runtime listeners pass the actual sender tab. Internal failure reports
+    // omit it; a different TikTok/user tab cannot inject scope results.
+    if (senderTabId !== undefined && senderTabId !== taskTabId) return;
+    if (!progress || !currentTask || result.task_id !== progress.task_id) return;
+    if (result.scope !== progress.scope || scopeResults[result.scope]) return;
+    const identity = accountIdentity();
+    if ((identity.viewer_handle && result.viewer_handle &&
+        identity.viewer_handle.toLowerCase() !== result.viewer_handle.toLowerCase()) ||
+        (identity.viewer_sec_uid && result.viewer_sec_uid && identity.viewer_sec_uid !== result.viewer_sec_uid)) {
+      await failActiveTask("account_identity_conflict");
+      return;
+    }
+    const accepted = boundedScopeResult(result, progress);
+    scopeResults[result.scope] = accepted;
+    markBusinessProgress();
+    await persistActiveTaskState();
+    if (accepted.items.length || accepted.status !== "failed") {
+      // A transport outage leaves this partial in the FIFO; the final is
+      // appended behind it, never overwrites it. Scope collection may proceed.
+      await postTiktokTaskResult({
+        task_id: result.task_id,
+        ...accountIdentity(),
+        status: "partial",
+        videos: accepted.items,
+        scope_counts: { [result.scope]: accepted.items.length },
+        debug: { scope: result.scope, scope_status: accepted.status },
+      }).catch(() => {});
+    }
+    await continueAccountTask();
   });
-
-  await postTiktokTaskResult({
-    task_id: progress.task_id,
-    status: finalizeTiktokTaskStatus(result.status),
-    videos: [],
-    scope_counts: { [result.scope]: result.scope_count },
-    debug: {
-      scope_statuses: { [result.scope]: result.status },
-      ...(result.error ? { scope_error: result.error } : {}),
-    },
-  });
-  cleanupTask();
+  scopeResultMutation = running.catch(() => {});
+  return running;
 }
 
 // ---------------------------------------------------------------------------
@@ -965,7 +1144,14 @@ export function pollTiktokTaskOnce(
   if (pollInFlight) return pollInFlight;
   const running = (async () => {
     await dependencies.ensureRecovery();
-    if (taskInFlight) return;
+    await flushPendingTiktokTaskResult();
+    if (currentTask && taskScopes(currentTask).every((scope) => scopeResults[scope])) {
+      // A prior final POST may have failed after its durable enqueue. Retry
+      // the same aggregate and release the owned tab/mutex once acknowledged.
+      await postTiktokTaskResult(accountResult(currentTask));
+      await cleanupTask();
+    }
+    if (taskInFlight || await readPendingResult()) return;
     // A runtime-stream subscriber is not necessarily a fully-capable
     // browser extension worker. Never atomically claim a backend task
     // when this context cannot create the tab the task requires.
@@ -1033,13 +1219,13 @@ export function handleTiktokTaskAlarm(alarmName: string): void {
     void (async () => {
       await ensureTiktokTaskRecovery();
       if (!currentTask || taskDeadlineMs === null) return;
-      if (Date.now() < taskDeadlineMs) {
+      if (Date.now() < Math.min(taskDeadlineMs, taskIdleDeadlineMs ?? taskDeadlineMs)) {
         // The browser clamped the one-shot alarm to its minimum delay;
         // re-arm the in-process fast path for the remaining budget.
         armTaskDeadline(taskDeadlineMs);
         return;
       }
-      await failActiveTask("task_timeout");
+      await failActiveTask(deadlineError());
     })().catch(() => {});
   }
 }

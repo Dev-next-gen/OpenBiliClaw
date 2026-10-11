@@ -776,7 +776,9 @@ def test_tiktok_favorite_count_matches_collect_count():
 # ---------------------------------------------------------------------------
 
 
-def test_auth_tiktok_capability_modes_match_frozen_contract(tmp_path: Any, monkeypatch: Any) -> None:
+def test_auth_tiktok_capability_modes_match_frozen_contract(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     """Guest mode: discover is ready; every account capability is login-required."""
     from openbiliclaw.api.source_auth.providers import auth_tiktok
 
@@ -838,7 +840,9 @@ def test_auth_tiktok_verified_cookie_marks_account_capabilities_ready(
         assert contract.capabilities[name].ready is True
 
 
-def test_tiktok_capability_readiness_helper_matches_contract(tmp_path: Any, monkeypatch: Any) -> None:
+def test_tiktok_capability_readiness_helper_matches_contract(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
     from openbiliclaw.api.source_auth.providers import (
         auth_tiktok,
         tiktok_capability_readiness,

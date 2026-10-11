@@ -18329,7 +18329,10 @@ def create_app(
             return _submit_extension_native_result("tiktok", payload)
 
         status = str(payload.get("status", "") or "").strip()
-        videos = [v for v in payload.get("videos", []) if isinstance(v, dict)]
+        raw_videos = payload.get("videos", [])
+        if not isinstance(raw_videos, list):
+            raise HTTPException(status_code=422, detail="videos must be a list")
+        videos = [v for v in raw_videos if isinstance(v, dict)]
         scope_counts = payload.get("scope_counts")
         if not isinstance(scope_counts, dict):
             scope_counts = None
@@ -18355,6 +18358,23 @@ def create_app(
 
         canonical_result = parse_task_result(task.get("result_json"))
         staged_status = staged_terminal_status(canonical_result)
+        task_payload = parse_task_result(task.get("payload_json"))
+        profile_update = (
+            task_payload.get("profile_update") is True
+            or task_payload.get("incremental") is True
+            or _init_owns_task(task_id)
+        )
+        if not staged_status and status in {"partial", "ok", "empty", "degraded"}:
+            try:
+                legacy_queue.bind_account(
+                    task_id,
+                    viewer_handle=payload.get("viewer_handle"),
+                    viewer_sec_uid=payload.get("viewer_sec_uid"),
+                    profile_update=profile_update,
+                )
+            except ValueError as exc:
+                legacy_queue.fail(task_id, error=str(exc))
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
 
         if (
             staged_status
@@ -18395,11 +18415,20 @@ def create_app(
             # propagate init-OWNED bootstrap results through the deduped path.
             _init_busy = _init_active_now()
             _skip_profile = _init_busy and not _init_owns_task(task_id)
-            if task_type == "bootstrap_profile" and canonical_videos and not _skip_profile:
+            if (
+                task_type == "bootstrap_profile"
+                and profile_update
+                and canonical_videos
+                and not _skip_profile
+            ):
                 fresh_videos, video_keys_by_index = _filter_new_source_bootstrap_items(
                     "tiktok",
                     canonical_videos,
-                    tiktok_bootstrap_video_key,
+                    lambda video: (
+                        str(canonical_result.get("account_key", ""))
+                        + ":"
+                        + tiktok_bootstrap_video_key(video)
+                    ),
                 )
                 events_with_keys: list[tuple[dict[str, Any], str]] = []
                 for index, video in enumerate(fresh_videos):

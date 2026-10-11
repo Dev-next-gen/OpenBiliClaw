@@ -302,3 +302,19 @@ test("finalizeTiktokTaskStatus mirrors the Douyin finalize mapping", () => {
   assert.equal(finalizeTiktokTaskStatus("degraded"), "degraded");
   assert.equal(finalizeTiktokTaskStatus("failed"), "failed");
 });
+
+
+test("invalid and oversized execution budgets fail closed", () => {
+  const base = { task_id: "task", scope: "tt_like", max_items: 10, max_scroll_rounds: 10, max_stagnant_scroll_rounds: 5 };
+  for (const value of [NaN, Infinity, -1, 1.5, 301]) {
+    assert.equal(isValidTiktokScopeExecuteMessage({ ...base, max_items: value }), false);
+  }
+  assert.equal(isValidTiktokScopeExecuteMessage({ ...base, max_scroll_rounds: 31 }), false);
+});
+
+test("failed scope navigation cannot be rescued by unrelated rows or empty text", () => {
+  assert.deepEqual(classifyTiktokScopeCompletion({
+    accessState: "signed_in", itemCount: 0, explicitEmpty: true, endOfFeed: false,
+    navigationFailed: true, navigationError: "scope_tab_not_found",
+  }), { status: "failed", error: "scope_tab_not_found" });
+});

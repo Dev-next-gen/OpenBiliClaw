@@ -109,9 +109,11 @@ test("tiktok task native_save union closes through the exact authenticated resul
   assert.deepEqual(calls, [[nativeTask, "tiktok"], result]);
 
   const requests: unknown[] = [];
+  const state = installChromeMock();
+  try {
   await postTiktokNativeSaveResult(result, {
     resolveUrl: async (path) => `http://127.0.0.1:8420/api${path}`,
-    fetch: async (input, init) => { requests.push([input, init]); },
+    fetch: async (input, init) => { requests.push([input, init]); return { ok: true, status: 200 }; },
   });
   assert.deepEqual(requests, [[
     "http://127.0.0.1:8420/api/sources/tiktok/task-result",
@@ -121,6 +123,7 @@ test("tiktok task native_save union closes through the exact authenticated resul
       body: JSON.stringify(result),
     },
   ]]);
+  } finally { state.restore(); }
 });
 
 test("buildTiktokTaskUrl lands on the tiktok.com homepage with the task marker", () => {
@@ -483,4 +486,60 @@ test("pollTiktokTaskNow exists as the WS-driven immediate-poll entry point", () 
   assert.equal(typeof pollTiktokTaskOnce, "function");
   assert.equal(typeof pollTiktokTaskNow, "function");
   assert.equal(typeof resetTiktokTaskStateForTest, "function");
+});
+
+
+test("backend bootstrap_profile wire is accepted with frozen scope and item budgets", () => {
+  const task = { id: "actual-backend-task", type: "bootstrap_profile", scopes: ["tt_like", "tt_collect", "tt_history", "tt_follow"], max_items_per_scope: 300, max_scroll_rounds: 15 };
+  assert.equal(isValidTiktokTask(task), true);
+  assert.equal(isValidTiktokTask({ ...task, scopes: ["tt_like", "tt_like"] }), false);
+  assert.equal(isValidTiktokTask({ ...task, scopes: ["dy_like"] }), false);
+  assert.equal(isValidTiktokTask({ ...task, max_items_per_scope: 0 }), false);
+});
+
+test("failed partial delivery survives a later timeout result and drains FIFO unchanged", async () => {
+  const state = installChromeMock();
+  const bodies: string[] = [];
+  let online = false;
+  const transport = {
+    resolveUrl: async () => "http://127.0.0.1:8420/api/sources/tiktok/task-result",
+    fetch: async (_url: string, init: RequestInit) => {
+      bodies.push(String(init.body));
+      return { ok: online, status: online ? 200 : 503 };
+    },
+    sleep: async () => {},
+  };
+  try {
+    const partial = { task_id: "same", status: "partial" as const, videos: [{ scope: "tt_like" as const, video_id: "7300000000000000001", url: "https://www.tiktok.com/@c/video/7300000000000000001", title: "keep", author: "c", author_handle: "c", cover_url: "" }] };
+    const final = { task_id: "same", status: "degraded" as const, videos: partial.videos, error: "task_timeout" };
+    await assert.rejects(postTiktokTaskResult(partial, transport, { maxAttempts: 1 }));
+    await assert.rejects(postTiktokTaskResult(final, transport, { maxAttempts: 1 }));
+    const pending = state.sessionStorage[TIKTOK_PENDING_RESULT_LOCAL_KEY] as { body: string; following: Array<{ body: string }> };
+    assert.equal(pending.body, JSON.stringify(partial));
+    assert.equal(pending.following[0].body, JSON.stringify(final));
+    // New worker; durable storage survives the module state reset.
+    resetTiktokTaskStateForTest();
+    online = true;
+    bodies.length = 0;
+    await flushPendingTiktokTaskResult(transport);
+    assert.deepEqual(bodies, [JSON.stringify(partial), JSON.stringify(final)]);
+    assert.equal(state.sessionStorage[TIKTOK_PENDING_RESULT_LOCAL_KEY], undefined);
+  } finally { resetTiktokTaskStateForTest(); state.restore(); }
+});
+
+test("storage failure prevents POST and retains the prior pending result", async () => {
+  const state = installChromeMock();
+  try {
+    const prior = { body: JSON.stringify({ task_id: "prior", status: "partial" }), queued_at_ms: 1 };
+    state.sessionStorage[TIKTOK_PENDING_RESULT_LOCAL_KEY] = prior;
+    state.sessionSetImpl = async () => { throw new Error("storage unavailable"); };
+    let posts = 0;
+    await assert.rejects(postTiktokTaskResult({ task_id: "new", status: "failed" }, {
+      resolveUrl: async () => "url",
+      fetch: async () => { posts++; return { ok: true, status: 200 }; },
+      sleep: async () => {},
+    }), /storage unavailable/);
+    assert.equal(posts, 0);
+    assert.equal(state.sessionStorage[TIKTOK_PENDING_RESULT_LOCAL_KEY], prior);
+  } finally { resetTiktokTaskStateForTest(); state.restore(); }
 });

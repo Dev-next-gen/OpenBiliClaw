@@ -1513,3 +1513,5 @@ Agent search_web 使用既有 `[network]` 出站策略连接固定公开 Exa MCP
 `sources.tiktok.request_interval_seconds` 现在实际约束每个上游请求（含 bootstrap/重试），formal 和 inspiration 共享。`daily_feed_budget` 是每日调用次数，不影响单次默认 12 条的取数上限；`mode=web` 在失败与冷却期间都禁止 yt-dlp 回退。
 
 TikTok 封面的 DoH 查询和固定地址下载遵循 `[network]` 路由，system 模式会把系统代理传给 libcurl；不存在额外 Cookie 或模型配置。该安全路径依赖 `cloudflare-dns.com` 可达，失败时不降级到未验证 DNS。
+
+TikTok 账号初始化等待默认 480 秒（`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS`），独立于默认关闭的周期增量间隔。scope 预算在后端与插件两层累计限制为最多 300，不信任回调声明的 scope_counts。

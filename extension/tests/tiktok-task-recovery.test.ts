@@ -149,7 +149,7 @@ test("a fresh worker restores the persisted task and reports a late result (part
     assert.deepEqual(posts[0].scope_counts, { tt_like: 1 });
     assert.equal(posts[1].task_id, "t-restore");
     assert.equal(posts[1].status, "ok");
-    assert.deepEqual(posts[1].videos, []);
+    assert.deepEqual(posts[1].videos, posts[0].videos, "final freezes the full canonical rows");
     assert.ok(
       state.removedTabs.includes(42),
       "the restored task tab must be closed on the final result",
@@ -360,4 +360,211 @@ test("a restored task ignores results for a different scope or task", async () =
     resetTiktokTaskStateForTest();
     state.restore();
   }
+});
+
+function scopeItem(scope: "tt_like" | "tt_collect" | "tt_history", id: string) {
+  return { scope, video_id: id, url: `https://www.tiktok.com/@creator/video/${id}`, title: "signal", author_handle: "creator", author: "Creator", cover_url: "" };
+}
+
+test("actual backend bootstrap scopes execute sequentially, survive worker restart, and freeze full results", async () => {
+  const state = installChromeMock();
+  installAlarmsMock();
+  try {
+    // Exact shape from enqueue_tiktok_bootstrap -> GET next-task.
+    const task = { id: "full-bootstrap", type: "bootstrap_profile" as const,
+      scopes: ["tt_like", "tt_collect", "tt_history", "tt_follow"] as const,
+      max_items_per_scope: 1, max_scroll_rounds: 2 };
+    await executeTask({ ...task, scopes: [...task.scopes] });
+    await settleSessionWrites();
+    assert.equal((state.sentMessages[0].message as { data: { scope: string } }).data.scope, "tt_like");
+    await handleTiktokScopeResult({ task_id: task.id, scope: "tt_like", status: "ok", scope_count: 99,
+      viewer_handle: "viewer", viewer_sec_uid: "uid-1",
+      items: [scopeItem("tt_like", "7300000000000000001"), scopeItem("tt_like", "7300000000000000002"), scopeItem("tt_collect", "7300000000000000003")] });
+    await settleSessionWrites();
+    const persisted = state.sessionStorage[TIKTOK_TASK_STATE_SESSION_KEY] as PersistedTiktokTaskState;
+    assert.equal(persisted.progress?.scope, "tt_collect");
+    assert.equal(persisted.scope_results?.tt_like?.items.length, 1);
+    assert.equal(persisted.scope_results?.tt_like?.status, "degraded");
+    assert.equal(state.updatedTabs.filter((tab) => tab.url).length, 1);
+    assert.equal(state.createdTabs[0].active, false);
+    resetTiktokTaskStateForTest();
+    await ensureTiktokTaskRecovery();
+    await handleTiktokScopeResult({ task_id: task.id, scope: "tt_collect", status: "failed", error: "private_tab", scope_count: 0, items: [], viewer_handle: "viewer", viewer_sec_uid: "uid-1" });
+    await handleTiktokScopeResult({ task_id: task.id, scope: "tt_history", status: "empty", scope_count: 0, items: [], viewer_handle: "viewer", viewer_sec_uid: "uid-1" });
+    await handleTiktokScopeResult({ task_id: task.id, scope: "tt_follow", status: "empty", scope_count: 0, items: [], viewer_handle: "viewer", viewer_sec_uid: "uid-1" });
+    await settleSessionWrites();
+    const posts = taskResultPosts(state);
+    const final = posts.at(-1)!;
+    assert.equal(final.status, "degraded");
+    assert.deepEqual(final.scope_counts, { tt_like: 1, tt_collect: 0, tt_history: 0, tt_follow: 0 });
+    assert.equal((final.videos as unknown[]).length, 1);
+    assert.equal(final.viewer_handle, "viewer");
+    assert.equal(final.viewer_sec_uid, "uid-1");
+    assert.deepEqual((final.debug as Record<string, unknown>).scope_statuses,
+      { tt_like: "degraded", tt_collect: "failed", tt_history: "empty", tt_follow: "empty" });
+    assert.ok(state.removedTabs.includes(42));
+  } finally { resetTiktokTaskStateForTest(); state.restore(); }
+});
+
+test("account switch between scopes retains original rows and rejects foreign account projection", async () => {
+  const state = installChromeMock();
+  installAlarmsMock();
+  try {
+    await executeTask({ id: "identity", type: "bootstrap_profile", scopes: ["tt_like", "tt_collect"], max_items_per_scope: 10, max_scroll_rounds: 1 });
+    await handleTiktokScopeResult({ task_id: "identity", scope: "tt_like", status: "ok", scope_count: 1, items: [scopeItem("tt_like", "7300000000000000001")], viewer_handle: "first", viewer_sec_uid: "uid-first" });
+    await handleTiktokScopeResult({ task_id: "identity", scope: "tt_collect", status: "ok", scope_count: 1, items: [scopeItem("tt_collect", "7300000000000000002")], viewer_handle: "second", viewer_sec_uid: "uid-second" });
+    const final = taskResultPosts(state).at(-1)!;
+    assert.equal(final.status, "degraded");
+    assert.equal(final.error, "account_identity_conflict");
+    assert.equal(final.viewer_handle, "first");
+    assert.deepEqual((final.videos as Array<{ video_id: string }>).map((v) => v.video_id), ["7300000000000000001"]);
+  } finally { resetTiktokTaskStateForTest(); state.restore(); }
+});
+
+test("foreign tab cannot finalize the active account task", async () => {
+  const state = installChromeMock();
+  installAlarmsMock();
+  try {
+    await executeTask({ id: "owned", type: "bootstrap_profile", scopes: ["tt_like"], max_items_per_scope: 10, max_scroll_rounds: 1 });
+    await handleTiktokScopeResult({ task_id: "owned", scope: "tt_like", status: "ok", scope_count: 1, items: [scopeItem("tt_like", "7300000000000000001")], viewer_handle: "viewer" }, 99);
+    assert.deepEqual(taskResultPosts(state), []);
+    assert.deepEqual(state.removedTabs, []);
+    await handleTiktokScopeResult({ task_id: "owned", scope: "tt_like", status: "ok", scope_count: 1, items: [scopeItem("tt_like", "7300000000000000001")], viewer_handle: "viewer" }, 42);
+    assert.equal(taskResultPosts(state).at(-1)?.status, "ok");
+  } finally { resetTiktokTaskStateForTest(); state.restore(); }
+});
+
+test("deadline recovery retains an offline partial before the degraded final", async () => {
+  const state = installChromeMock();
+  installAlarmsMock();
+  const onlineFetch = state.fetchImpl;
+  try {
+    const item = scopeItem("tt_like", "7300000000000000001");
+    const scopeResult = { task_id: "t-restore", scope: "tt_like" as const, items: [item], scope_count: 1, status: "ok" as const, viewer_handle: "viewer" };
+    const partial = { task_id: "t-restore", status: "partial", videos: [item], viewer_handle: "viewer" };
+    state.sessionStorage[TIKTOK_PENDING_RESULT_LOCAL_KEY] = { body: JSON.stringify(partial), queued_at_ms: 1 };
+    state.sessionStorage[TIKTOK_TASK_STATE_SESSION_KEY] = persistedRecord({
+      deadline_ms: Date.now() - 1000,
+      scope_results: { tt_like: scopeResult },
+    });
+    state.fetchImpl = async () => new Response("offline", { status: 503 });
+    resetTiktokTaskStateForTest();
+    await ensureTiktokTaskRecovery();
+    const queue = state.sessionStorage[TIKTOK_PENDING_RESULT_LOCAL_KEY] as { body: string; following: Array<{ body: string }> };
+    assert.equal(queue.body, JSON.stringify(partial));
+    const final = JSON.parse(queue.following[0].body);
+    assert.equal(final.status, "degraded");
+    assert.equal(final.error, "task_timeout");
+    assert.deepEqual(final.videos, [item]);
+    assert.equal(final.viewer_handle, "viewer");
+    state.fetchImpl = onlineFetch;
+    resetTiktokTaskStateForTest();
+    await ensureTiktokTaskRecovery();
+    assert.equal(state.sessionStorage[TIKTOK_PENDING_RESULT_LOCAL_KEY], undefined);
+    assert.deepEqual(taskResultPosts(state)[0], partial);
+    assert.deepEqual(taskResultPosts(state)[1], final);
+  } finally { resetTiktokTaskStateForTest(); state.restore(); }
+});
+
+test("first projected handle-only identity is never upgraded by a later secUid", async () => {
+  const state = installChromeMock();
+  installAlarmsMock();
+  try {
+    await executeTask({ id: "identity-form", type: "bootstrap_profile", scopes: ["tt_like", "tt_collect"], max_items_per_scope: 10, max_scroll_rounds: 1 });
+    await handleTiktokScopeResult({ task_id: "identity-form", scope: "tt_like", status: "ok", scope_count: 1, items: [scopeItem("tt_like", "7300000000000000001")], viewer_handle: "viewer" });
+    await handleTiktokScopeResult({ task_id: "identity-form", scope: "tt_collect", status: "ok", scope_count: 1, items: [scopeItem("tt_collect", "7300000000000000002")], viewer_handle: "viewer", viewer_sec_uid: "later-visible-uid" });
+    const posts = taskResultPosts(state);
+    assert.equal(posts.length, 3);
+    assert.ok(posts.every((post) => post.viewer_handle === "viewer" && !Object.hasOwn(post, "viewer_sec_uid")));
+    assert.equal(posts.at(-1)?.status, "ok");
+  } finally { resetTiktokTaskStateForTest(); state.restore(); }
+});
+
+test("idle deadline advances only on accepted scope progress and survives worker recovery", async () => {
+  const state = installChromeMock();
+  const alarms = installAlarmsMock();
+  const actualNow = Date.now;
+  let now = actualNow();
+  Date.now = () => now;
+  try {
+    await executeTask({ id: "idle", type: "bootstrap_profile", scopes: ["tt_like", "tt_collect", "tt_history", "tt_follow"], max_items_per_scope: 10, max_scroll_rounds: 15 });
+    await settleSessionWrites();
+    const first = state.sessionStorage[TIKTOK_TASK_STATE_SESSION_KEY] as PersistedTiktokTaskState;
+    const absolute = first.deadline_ms;
+    assert.equal(absolute, now + 300_000);
+    assert.equal(first.idle_deadline_ms, now + 120_000);
+    assert.equal(alarms.created.filter((a) => a.name === TASK_TIMEOUT_ALARM_NAME).at(-1)?.when, first.idle_deadline_ms);
+    now += 50_000;
+    handleTiktokTaskAlarm(TASK_TIMEOUT_ALARM_NAME); // early alarm/heartbeat cannot extend idle
+    await settleSessionWrites();
+    assert.equal((state.sessionStorage[TIKTOK_TASK_STATE_SESSION_KEY] as PersistedTiktokTaskState).idle_deadline_ms, first.idle_deadline_ms);
+    await handleTiktokScopeResult({ task_id: "idle", scope: "tt_like", status: "ok", scope_count: 1, items: [scopeItem("tt_like", "7300000000000000001")], viewer_handle: "viewer" });
+    const progressed = state.sessionStorage[TIKTOK_TASK_STATE_SESSION_KEY] as PersistedTiktokTaskState;
+    assert.equal(progressed.deadline_ms, absolute);
+    assert.equal(progressed.idle_deadline_ms, now + 120_000);
+    now += 10_000;
+    resetTiktokTaskStateForTest();
+    await ensureTiktokTaskRecovery(); // re-handshake cannot extend either clock
+    assert.equal(alarms.created.filter((a) => a.name === TASK_TIMEOUT_ALARM_NAME).at(-1)?.when, progressed.idle_deadline_ms);
+    now = progressed.idle_deadline_ms! + 1;
+    assert.ok(now < absolute);
+    handleTiktokTaskAlarm(TASK_TIMEOUT_ALARM_NAME);
+    await settleSessionWrites();
+    const final = taskResultPosts(state).at(-1)!;
+    assert.equal(final.error, "task_idle_timeout");
+    assert.equal(final.status, "degraded");
+    assert.equal((final.videos as unknown[]).length, 1);
+  } finally { Date.now = actualNow; resetTiktokTaskStateForTest(); state.restore(); }
+});
+
+test("expired idle clock restores immediately without resetting the absolute budget", async () => {
+  const state = installChromeMock();
+  installAlarmsMock();
+  try {
+    state.sessionStorage[TIKTOK_TASK_STATE_SESSION_KEY] = persistedRecord({
+      deadline_ms: Date.now() + 200_000, idle_deadline_ms: Date.now() - 100,
+    });
+    resetTiktokTaskStateForTest();
+    await ensureTiktokTaskRecovery();
+    assert.equal(taskResultPosts(state).at(-1)?.error, "task_idle_timeout");
+  } finally { resetTiktokTaskStateForTest(); state.restore(); }
+});
+
+test("timeout salvages matching content checkpoints and clears them only after ACK", async () => {
+  const state = installChromeMock();
+  installAlarmsMock();
+  const key = "openbiliclaw_tiktok_content_scope_v1";
+  try {
+    const item = scopeItem("tt_like", "7300000000000000001");
+    state.sessionStorage[key] = { message: { task_id: "t-restore", scope: "tt_like" }, accepted_items: [item], viewer_handle: "viewer" };
+    state.sessionStorage[TIKTOK_TASK_STATE_SESSION_KEY] = persistedRecord({ deadline_ms: Date.now() - 100 });
+    const fetch = state.fetchImpl;
+    let sawCheckpointBeforeAck = false;
+    state.fetchImpl = async (input, init) => {
+      if (String(input).endsWith("/task-result")) sawCheckpointBeforeAck = Boolean(state.sessionStorage[key]);
+      return fetch(input, init);
+    };
+    resetTiktokTaskStateForTest();
+    await ensureTiktokTaskRecovery();
+    const final = taskResultPosts(state).at(-1)!;
+    assert.equal(final.status, "degraded");
+    assert.deepEqual(final.videos, [item]);
+    assert.equal(sawCheckpointBeforeAck, true);
+    assert.equal(state.sessionStorage[key], undefined);
+  } finally { resetTiktokTaskStateForTest(); state.restore(); }
+});
+
+test("terminal cleanup never deletes another task's content checkpoint", async () => {
+  const state = installChromeMock();
+  installAlarmsMock();
+  const key = "openbiliclaw_tiktok_content_scope_v1";
+  try {
+    const checkpoint = { message: { task_id: "newer-task", scope: "tt_like" }, accepted_items: [scopeItem("tt_like", "7300000000000000001")], viewer_handle: "someone-else" };
+    state.sessionStorage[key] = checkpoint;
+    state.sessionStorage[TIKTOK_TASK_STATE_SESSION_KEY] = persistedRecord({ deadline_ms: Date.now() - 100 });
+    resetTiktokTaskStateForTest();
+    await ensureTiktokTaskRecovery();
+    assert.equal(taskResultPosts(state).at(-1)?.status, "failed");
+    assert.equal(state.sessionStorage[key], checkpoint);
+  } finally { resetTiktokTaskStateForTest(); state.restore(); }
 });

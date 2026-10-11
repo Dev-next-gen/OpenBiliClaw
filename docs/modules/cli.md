@@ -1691,3 +1691,5 @@ $ openbiliclaw db-repair
 ### TikTok 来源验收补全（2026-10-04）
 
 新增 `discover-tiktok --mode feed|tag|user|search --query TEXT --limit 1..20`：使用配置中的网络路线及可选 Cookie，在临时目录执行只读取数 smoke，不写生产候选/记忆/画像。正式 `discover --source tiktok` 支持 rate_limited、no_keywords 和 degraded 的真实状态提示。
+
+TikTok full-source 初始化在后台标签页顺序读取四个 scope；默认等待 480 秒，覆盖扩展最多 360 秒绝对 deadline 和领取/回传余量，可用 `OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS` 调整。明确登录的空列表与登录失败分别显示，不再把未登录描述为 empty。

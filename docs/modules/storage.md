@@ -831,3 +831,7 @@ db.suppress_low_confidence_recommendations()
 ## 推荐读取的事务内复用（2026-09-08）
 
 `load_pool_serve_snapshot()`、`load_pool_platform_availability()` 与 `count_pool_readiness_isolated()` 使用隔离只读事务；动态 delight 阈值仅在该事务复用。相同连接、SQL、参数的候选原始行也只查询一次，完整投影与轻量投影分别缓存。每次调用仍执行当前时刻的资格检查、已看过滤、来源链接检查和独立 topic window，返回的是独立行副本。成功、回滚和异常关闭均丢弃缓存，后续请求必须读取新提交，不能用它缓存跨请求候选或库存。公开返回结构不变。
+
+### TikTok 账号任务（2026-10-11）
+
+`tiktok_tasks.payload_json` 冻结 scopes、每 scope 预算和 profile_update；result_json 保存有界 rows、实际 counts、opaque account_key、可选 sec_uid_key、sticky bounds_exceeded 和首份 staged 终态，终态重试不替换 payload。`auth_state` 的 `tiktok_profile_account_key`（handle hash）与可选 `tiktok_profile_sec_uid_key` 在 SQLite 写事务中首次绑定画像账号，secUid 暂缺或补齐不改变 account_key，已知 secUid 冲突或 handle 变化拒绝导入；普通 smoke 不写这些 key。裁剪后的 canonical status 与 staged marker 原子写为 degraded。seen/event 幂等身份带 account_key，scope+内容身份保持独立。

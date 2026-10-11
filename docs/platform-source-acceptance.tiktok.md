@@ -2,6 +2,24 @@
 
 本轮续验日期：2026-10-10。登录态搜索、安装版 Chrome 扩展 Cookie 自动同步和真实模型管线已通过；当前详细结果见文末续验。历史段落保留其当时的证据边界，不代表当前仍缺 Cookie。discovery-only 范围的真实功能验收已补齐；本机全量与修复后回归结果见文末，当前分支 CI 以 [PR #275 checks](https://github.com/whiteguo233/OpenBiliClaw/pull/275/checks) 为准。
 
+## PR #286 独立验收与修复（2026-10-11）
+
+固定基线：`a9d9b0bc...7a6386ba`（原分支实际包含 7 个提交，含契约提交）；修复 worktree `.worktrees/tiktok-full-readiness`，分支 `fix/tiktok-full-readiness`。本轮为 full 范围验收与修复，原分支/主工作区开始均干净；不合并、不发布、不切换生产服务。
+
+原交付不能判为“全部实现并交付”：真实 backend bootstrap_profile 被 dispatcher 拒绝、全局 DOM 采集可误归类、未 ACK partial 可被 timeout 覆盖、普通 smoke 可写画像、后端缺冻结预算/账号边界；原 head CI 还因两处 E501 提前失败。下方原 ledger 的实现 PASS 属历史注册/单测证据，不能覆盖这些缺陷。
+
+| 本轮门 | 结论 | 证据/限制 |
+| --- | --- | --- |
+| 实际任务协议 / CLI 等待 | 修复并专项通过 | Python next-task JSON → TS dispatcher → API event ingress，四 scope 顺序和累计 cap；CLI 480 秒覆盖最多 360 秒执行与领取余量；synthetic DOM rows，不冒充真站 |
+| 本人列表/登录墙/导航恢复 | 修复并专项通过 | exact own profile + proven active scope root，拒绝全局 DOM，登录墙优先；content lifecycle / scope tests |
+| durability / scope / account / profile ownership | 修复并专项通过 | FIFO ACK replay、独立持久 idle/absolute deadlines、scope caps 与 sticky degraded、SQLite first-account fence（handle hash 稳定，可选 secUid 冲突守卫）、smoke 无画像传播；观察身份不冒充 verified |
+| native-save SPA 身份 | 修复并专项通过 | 等待/确认阶段 URL 改变时零误点、零误报成功；无真实站内写操作 |
+| 全量回归/构建 | 部分通过，全量进行中 | Ruff/MyPy 318 文件、Chrome/Firefox build+assets 通过；最终插件 1779/1779，后端受影响回归 232 passed，最后两项边界修复后相关回归 113 passed，CLI/文档 20 passed；首轮完整后端回归仍在运行（早于最后两项边界修复）；最终 head CI 见 PR #286 checks。CI 显式使用 Node 22 执行 Python→TS 协议桥 |
+| 已安装登录态 bootstrap→真实模型画像 | BLOCKED | Chrome inventory 两次失败，当前无可读标签页；不能重用 #275 的发现链路证明 |
+| 已安装增量/站内收藏真实验证 | NOT_RUN | 依赖同一可控已登录浏览器和新版扩展；收藏另须 exact item/action/target 的具体授权 |
+
+总体仍为 **incremental only**；代码修复与 fixture/protocol 测试不等于 full 验收 complete。未执行上游点赞、收藏、关注或取消操作。
+
 ## Full 升级验收 ledger（2026-10-11 起，进行中）
 
 本轮把 integration level 从 `discovery-only` 升级为 `full`：账号行为采集（点赞/收藏/观看历史 bootstrap + 周期增量）、guided init 画像初始化、站内收藏 native save。分支 `feat/tiktok-full-source`（worktree `.worktrees/tiktok-full`，基于 `feat/tiktok-source` 头 `a9d9b0bc`），stacked 于 PR #275 之上。

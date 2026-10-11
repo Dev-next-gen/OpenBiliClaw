@@ -860,3 +860,12 @@ Popup 按当前回合和 hop 累积 `delta`，历史刷新/会话切回可恢复
 ### 来源卡片启用框可访问性（2026-10-10）
 
 来源关闭后卡片折叠、禁止展开，但嵌套的启用复选框必须仍可操作。`syncSourceCardEnabledState()` 以 `data-source-off` 控制折叠行为，不在包裹复选框的祖先节点设置 `aria-disabled=true`，避免读屏器和浏览器自动化把重新启用入口也判定为禁用。TikTok 安装版设置页关闭→保存→重新开启回归覆盖该边界。
+
+## TikTok full-source 修复验收（2026-10-11）
+
+- dispatcher 接受真实 `bootstrap_profile + scopes[] + max_items_per_scope`，在后台自有 tab 顺序执行四 scope；校验实际 sender tab、固定首次 viewer 身份形式，每 scope 最多 300。
+- content 只接受本人 profile 的目标列表或明确选中 tabpanel，登录墙优先；拒绝全页 DOM fallback、陌生人 profile。每轮采集先持久化再继续，整页导航重入和重复消息可恢复。
+- partial/final 使用 durable FIFO，持久 idle deadline 为 120 秒、absolute deadline 最多 360 秒，仅业务进展可延长 idle；后续 timeout 不覆盖未 ACK 行；scope 失败保留既有 rows/degraded。native-save 等待/确认阶段重新核对当前视频，防 SPA 串视频。
+- fixtures / Python↔TS 协议测试不代表已安装真站验收；Chrome 控制连接当前失败。详见 [台账](../platform-source-acceptance.tiktok.md)。
+
+后端 CI 显式使用 Node 22 执行 Python next-task → 原始 TypeScript dispatcher → API ingress 协议回归，防止两端各自单测通过却不能互通；此测试使用合成浏览器响应。

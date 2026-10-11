@@ -715,8 +715,8 @@ def _tiktok_capabilities(
     in the frozen contract.
     """
     personal_detail = (
-        "点赞、收藏、观看历史、关注和站内保存只在用户已登录的 tiktok.com 标签页内"
-        "只读执行；后端不接触 Cookie 值，只读同步来的登录证据。"
+        "点赞、收藏、观看历史和关注列表只在用户已登录的 tiktok.com 标签页内"
+        "只读采集；Cookie 会话验证和浏览器本人列表证据分别确认。"
     )
     return {
         "discover": SourceCapabilityAuth(

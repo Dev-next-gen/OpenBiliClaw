@@ -460,3 +460,9 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 `POST /api/chat/stream` 对 durable turn 在执行 lease 内重新读取状态：已完成/失败只重放；新回复也在 lease 内提交完成，防止 GET 触发的后台恢复与 SSE 重复摄取链接/学习。缺失 turn 或消息、会话等身份冲突提前拒绝。该保证覆盖并发与已完成请求重试，不扩展为任意中途取消的副作用 exactly-once 保证。
 
 服务未就绪等 lease 准入错误仍转换为 SSE 错误说明，未执行的 durable turn 保持 pending，不在未获得执行权时标成 completed。
+
+## TikTok 账号任务结果边界（2026-10-11）
+
+`GET /api/sources/tiktok/next-task` 返回冻结的 bootstrap_profile/scopes/max_items_per_scope/profile_update。`POST task-result` 的成功/partial/degraded 需 viewer_handle（可选 viewer_sec_uid）；后端规范化并散列 observed claim，首次绑定画像账号，跨任务切号返回 409 `tiktok_account_switch_requires_reset`，已 staged 的首份结果不被重试覆盖。`videos` 非数组返回 422；scope 与累计预算在后端限制，超额裁剪的最终结果标记 degraded，后续重试不能洗掉该状态。同一 handle 的可选 secUid 补齐/暂缺不改变 account_key，已知 secUid 冲突仍拒绝。
+
+仅 profile_update、incremental 或当前 init-owned 任务进入画像 ingress；普通 smoke 不写 seen、画像或全局账号绑定。账号身份不冒充上游 verified。协议桥与崩溃恢复测试见 [台账](../platform-source-acceptance.tiktok.md)。

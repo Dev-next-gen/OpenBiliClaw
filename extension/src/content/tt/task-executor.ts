@@ -63,6 +63,8 @@ export interface TiktokScopeResult {
   scope: TiktokScope;
   items: TiktokBootstrapItem[];
   scope_count: number;
+  viewer_handle?: string;
+  viewer_sec_uid?: string;
   status: "ok" | "empty" | "degraded" | "failed";
   error?: string;
   debug?: Record<string, unknown>;
@@ -84,9 +86,11 @@ export function isValidTiktokScopeExecuteMessage(
   const v = value as Record<string, unknown>;
   if (typeof v.task_id !== "string" || !v.task_id) return false;
   if (!TIKTOK_SCOPES.includes(v.scope as TiktokScope)) return false;
-  if (typeof v.max_items !== "number") return false;
-  if (typeof v.max_scroll_rounds !== "number") return false;
-  if (typeof v.max_stagnant_scroll_rounds !== "number") return false;
+  for (const key of ["max_items", "max_scroll_rounds", "max_stagnant_scroll_rounds"]) {
+    const n = v[key];
+    if (typeof n !== "number" || !Number.isSafeInteger(n) || n < 0) return false;
+  }
+  if ((v.max_items as number) > 300 || (v.max_scroll_rounds as number) > 30) return false;
   return true;
 }
 
@@ -212,14 +216,14 @@ export function classifyTiktokScopeCompletion(
   if (input.accessState !== "signed_in") {
     return { status: "failed", error: "logged_out" };
   }
+  if (input.navigationFailed) {
+    return { status: "failed", error: input.navigationError || "navigation_failed" };
+  }
   if (input.itemCount > 0) {
     if (input.endOfFeed) return { status: "ok" };
     return { status: "degraded", error: "pagination_incomplete" };
   }
   if (input.explicitEmpty) return { status: "empty" };
-  if (input.navigationFailed) {
-    return { status: "failed", error: input.navigationError || "navigation_failed" };
-  }
   return { status: "failed", error: "unrecognized_empty_state" };
 }
 
