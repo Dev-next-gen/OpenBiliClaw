@@ -4,6 +4,13 @@
 
 ## 未发布：TikTok 源后端缺口修复与前端展示面补全（issue #88）
 
+### 新增：TikTok full 升级收尾——契约测试反转与 audit 清零（2026-10-11）
+
+- `tests/test_tiktok_contract.py` 由「断言排除成立」整体改写为正向注册断言：`_PLATFORM_SOURCE_FIELDS` / 双 manifest content_scripts / `source_incremental_sync` 注册、native-save 不再是 local-only、guidedInit=true、dispatcher 任务标记与两阶段结果重投；契约登记的排除测试 `test_tiktok_engagement_danmaku_is_unavailable`（新建）与 `test_tiktok_media_deep_link_uses_https`（保留）精确存在并通过；移动端凭据排除保持正向「排除仍成立」。
+- audit `required_missing=0`：`extension.task` / `extension.background` 通过新增 canonical 路由键模块 `extension/src/content/tiktok/task-executor.ts`（re-export `tt/` 实现）并让 service-worker 经该路径引用类型而 PASS；`source-auth.capability-readiness` 通过 `_TIKTOK_CAPABILITY_AUTH_MODES`（discover=optional-credential，profile/bootstrap/incremental/native-save/cookie-sync=login-required）与 `auth_tiktok` 的 capabilities 投影 PASS；guided init 增加 tiktok profile 能力准入（未就绪时单独选择返回 `no_profile_signal_sources`，混合选择降级并保留公开发现）。
+- 文档同步：saved-sync / extension 模块的六平台表述更新为七平台（含 TikTok）；`tiktok.md` 补站内收藏与 capability 准入叙述；验收台账更新。
+- 同时收录并行落地的扩展侧提交：`8799b0aa`（tiktok-task-dispatcher + `content/tiktok.ts` / `tt/` DOM-only 采集管线）、`e65d7e21`（native-save executor 与 dispatcher 接线）、`0cb57594`（`ExtensionNativeSaveBroker` 注册与授权面，`TikTok Favorites` 目标）。
+
 ### 新增：TikTok 接入 guided init 画像初始化（2026-10-11）
 
 - 解除排除：`_INIT_SOURCE_ORDER` 与 `init_prereqs._PLATFORM_SOURCE_FIELDS` 放行 tiktok，`web/shared/source-status.js` 的 `guidedInit` 翻为 `true`；setup / 桌面 / popup 的初始化来源清单由共享 roster 自动派生，setup 页补充 `tiktok_degraded` 文案。

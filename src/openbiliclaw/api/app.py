@@ -6721,6 +6721,31 @@ def create_app(
                 warnings.append(
                     "Instagram 个人信号未就绪：本次初始化跳过点赞、收藏和关注；公开发现保持启用。"
                 )
+        tiktok_capability_readiness = capability_readiness
+        if "tiktok" in effective_sources and callable(tiktok_capability_readiness):
+            tiktok_profile_readiness = str(
+                tiktok_capability_readiness("tiktok", "profile") or "unverified"
+            )
+            if tiktok_profile_readiness != "ready":
+                if effective_sources == {"tiktok"}:
+                    return JSONResponse(
+                        {
+                            "error": "no_profile_signal_sources",
+                            "detail": (
+                                "TikTok 公开发现可用访客身份，但初始化点赞、收藏、观看历史"
+                                "和关注记录需要当前浏览器已登录 tiktok.com 并连接扩展"
+                                "（登录证据由扩展同步并经会话心跳确认）。"
+                            ),
+                            "capability": "profile",
+                            "readiness": tiktok_profile_readiness,
+                        },
+                        status_code=409,
+                    )
+                effective_sources.discard("tiktok")
+                warnings.append(
+                    "TikTok 个人信号未就绪：本次初始化跳过点赞、收藏、观看历史和关注；"
+                    "公开发现保持启用。"
+                )
         configured_bangumi_username = str(
             getattr(
                 getattr(

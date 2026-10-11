@@ -6,19 +6,21 @@
 
 本轮把 integration level 从 `discovery-only` 升级为 `full`：账号行为采集（点赞/收藏/观看历史 bootstrap + 周期增量）、guided init 画像初始化、站内收藏 native save。分支 `feat/tiktok-full-source`（worktree `.worktrees/tiktok-full`，基于 `feat/tiktok-source` 头 `a9d9b0bc`），stacked 于 PR #275 之上。
 
-契约门基线：契约更新为 `full` 后 audit `required_missing=11`（transport.implementation、source-auth.capability-readiness、profile.signals、profile.incremental、profile.bootstrap-registries、extension.task、extension.task-marker、extension.background、surface.setup、engagement.danmaku 排除测试改名、media.native-save），对应下表 NOT_RUN 项；全部 required 行 PASS 前总体 verdict 为 **incomplete**。
+契约门基线：契约更新为 `full` 后 audit `required_missing=11`（transport.implementation、source-auth.capability-readiness、profile.signals、profile.incremental、profile.bootstrap-registries、extension.task、extension.task-marker、extension.background、surface.setup、engagement.danmaku 排除测试改名、media.native-save），对应下表 NOT_RUN 项；全部 required 行 PASS 前总体 verdict 为 **incomplete**。2026-10-11 收尾后 audit `required_missing=0`、`registration_check_passed=true`（PASS 46 / MANUAL 14 / N/A 2）；MANUAL 14 项为语义类人工验收，真实登录态受控 E2E 见「真实验收」行。
 
 | Gate | Applicability | Status | Evidence / remaining risk |
 | --- | --- | --- | --- |
 | Contract gate（冻结 full 契约） | required | PASS | 契约已更新为 full；audit 基线 11 MISSING，见上 |
 | 后端任务基建（tiktok_tasks 队列表 + 五处注册 + next-task/task-result 路由） | required | PASS | 提交 4644dded；`TiktokTaskQueue` + `tiktok_tasks` 表、`_TASK_TABLES` / `_BOOTSTRAP_TASK_TABLES` / `bootstrap_state` / `source_incremental_sync` 五处注册、`GET next-task`（204）/ `POST task-result`（两阶段 staged completion）/ `POST kick`；23 项队列与路由测试 |
-| 插件采集端（tiktok-task-dispatcher + content/tiktok + manifest 注册，两阶段 staged completion） | required | NOT_RUN | |
+| 插件采集端（tiktok-task-dispatcher + content/tiktok + manifest 注册，两阶段 staged completion） | required | PASS | 提交 8799b0aa / e65d7e21：`tiktok-task-dispatcher.ts`（poll → claim → marker tab → 两阶段 staged completion，pending-result 先落 `chrome.storage.local` 再有界重试至 2xx ACK）、`content/tiktok.ts` + `tt/`（DOM-only，零 dy 依赖）、双 manifest content_scripts 注册；canonical 路由键模块 `content/tiktok/task-executor.ts`；audit `extension.task` / `extension.task-marker` / `extension.background` PASS |
 | 画像初始化（guided init 接入，init 真实信号） | required | PASS | `_INIT_SOURCE_ORDER` / `_PLATFORM_SOURCE_FIELDS` 放行，`guidedInit: true`，CLI `--yes-tiktok` / `--no-tiktok`，`_enqueue_tiktok_bootstrap_task` / `_collect_tiktok_bootstrap_events` 接入 init 第 1 阶段，事件经 `_tiktok_events_to_history_items` 进画像；`tests/test_tiktok_guided_init.py` 15 项；audit `profile.signals`、`surface.setup` 转 PASS（真实登录态采集证据仍属「真实验收」行） |
 | 周期增量（source_incremental_sync，默认关不变） | required | PASS | 提交 4644dded；`SOURCE_ORDER` / `_TASK_SPECS` / `_SOURCE_CONFIG_ALIASES` / `_SOURCE_CONFIG_NAMES` / `_SOURCE_INTERVAL_FIELDS` 注册，`source_incremental_enabled` 与 `sources.tiktok.incremental_enabled` 双默认关不变；`seed_guided_init_attempts` 把 tiktok 归入 ok-only 组 |
-| 站内收藏（ExtensionNativeSaveBroker + native-save/tiktok.ts，auto_sync 默认关，精确授权 E2E） | required | NOT_RUN | |
-| 契约测试反转（test_tiktok_contract.py 排除断言改写为正向） | required | NOT_RUN | |
-| 真实验收（登录态 bootstrap/增量/native-save 受控 E2E） | required | NOT_RUN | |
-| 文档/交付（模块文档、CHANGELOG、架构图、PR） | required | NOT_RUN | |
+| 站内收藏（ExtensionNativeSaveBroker + native-save/tiktok.ts，auto_sync 默认关，精确授权 E2E） | required | PASS | 提交 e65d7e21 / 0cb57594：broker / adapter / identity 注册（`is_native_save_local_only("tiktok")=False`），executor 目标 `TikTok Favorites`，auto_sync 默认关闭；`test_extension_native_save_broker.py` / `test_saved_sync_extension_adapters.py` 等新增用例通过；真实受控 E2E 仍待人工授权运行（见下行） |
+| 契约测试反转（test_tiktok_contract.py 排除断言改写为正向） | required | PASS | 排除断言全部改写为正向注册断言并通过（12 项）；契约登记的 `test_tiktok_engagement_danmaku_is_unavailable` / `test_tiktok_media_deep_link_uses_https` 精确存在；audit `required_missing=0`（PASS 46 / MANUAL 14 / N/A 2 / MISSING 0，`registration_check_passed=true`） |
+| 真实验收（登录态 bootstrap/增量/native-save 受控 E2E） | required | NOT_RUN | 需要用户已登录 TikTok 的浏览器会话做真实 bootstrap / 增量 / native-save 受控 E2E（精确命名授权 + `allow_state_changing=true`） |
+| 文档/交付（模块文档、CHANGELOG、架构图、PR） | required | PASS | `tiktok.md`（账号 bootstrap / guided init / native save 章节）、`cli.md` / `init.md` / `api.md` / `config.md` / `extension.md` / `saved-sync.md`（六平台→七平台）已同步；CHANGELOG 三个升级条目；PR 待上层统一提交 |
+
+总体 verdict：**incremental only** —— required 行中「真实验收」仍 NOT_RUN，登录态真实受控 E2E 完成前不得宣称 complete。
 
 ## 范围与 provenance
 

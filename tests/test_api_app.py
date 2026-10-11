@@ -17803,6 +17803,51 @@ class TestGuidedInitEndpoints:
         }
         assert db.get_latest_init_run() is None
 
+    def test_init_rejects_tiktok_only_when_profile_capability_is_signed_out(
+        self, tmp_path: Path
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(
+            bili="ok",
+            chat=True,
+            platforms=["tiktok"],
+            capability_readiness={("tiktok", "profile"): "login_required"},
+        )
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+
+        with TestClient(app) as client:
+            response = client.post("/api/init", json={"sources": ["tiktok"]})
+
+        assert response.status_code == 409
+        assert response.json()["error"] == "no_profile_signal_sources"
+        assert response.json()["capability"] == "profile"
+        assert response.json()["readiness"] == "login_required"
+        assert db.get_latest_init_run() is None
+
+    def test_init_drops_unready_tiktok_from_mixed_selection_with_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(
+            bili="ok",
+            chat=True,
+            platforms=["bilibili", "tiktok"],
+            capability_readiness={("tiktok", "profile"): "unverified"},
+        )
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+        captured = self._capture_run_guided_init(monkeypatch)
+        with TestClient(app) as client:
+            response = client.post("/api/init", json={"sources": ["bilibili", "tiktok"]})
+            assert response.status_code == 202
+            assert any("TikTok 个人信号未就绪" in w for w in response.json()["warnings"])
+            self._drive_until(client, captured, key="include_tiktok")
+
+        assert captured["include_bili"] is True
+        assert captured["include_tiktok"] is False
+        assert db.get_latest_init_run() is not None
+
     def test_init_records_douyin_degraded_as_partial_success(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

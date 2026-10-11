@@ -79,6 +79,14 @@ TikTok 是 guided init 的正式来源（`guidedInit: true`）：
 - **画像链**：任务结果由 task-result 路由负责持久化与事件入口重放（init-owned 任务的画像传播不被 init 围栏跳过）；本 run 的偏好分析与画像构建直接使用收集到的事件，经 `_tiktok_events_to_history_items` 转成画像构建行（`source_platform=tiktok`）。
 - **调度种子**：`ok` 终态 seed `last_attempt_at` / `last_success_at`（`seed_guided_init_attempts` 的 ok-only 组），`empty` / `degraded` / `failed` 不推进增量时钟。
 
+## 站内收藏（native save）
+
+TikTok 加入七平台扩展保存矩阵（`docs/modules/saved-sync.md`）：本地「收藏 / 稍后再看」先落 membership（local-first），开启自动同步或手动 `/sync` 时由 `ExtensionNativeSaveBroker` 把 job 写入 `extension_native_save_jobs` ledger，扩展 `tiktok-task-dispatcher` 经 `GET /api/sources/tiktok/next-task` 优先领取 native-save job，在已登录 tiktok.com 标签页内执行收藏点击（`extension/src/content/native-save/tiktok.ts`，目标 `TikTok Favorites`；watch-later 按能力矩阵回退 favorite）。
+
+- 自动同步默认关闭（`auto_sync_enabled = false`）；真实账号写入只允许在 `allow_state_changing=true` 且 exact platform/action/content ID/expected target 精确命名授权下运行（授权 E2E runbook 同一流程）。
+- `is_native_save_local_only("tiktok")` 已为 `false`；executor 的 `unsupported_content_type` 等内容限制仍落 local-only 终态。
+- 就绪证据复用凭据路径：`auth_tiktok` 的 capability map（`_TIKTOK_CAPABILITY_AUTH_MODES`）把 `profile / bootstrap / incremental / native-save` 标为 `login-required`，readiness 由同步 Cookie + passport 心跳探针决定；guided init 对 tiktok-only 且未就绪的选择返回 `no_profile_signal_sources`，混合选择降级并保留公开发现。
+
 ## 合规说明
 
 - 只读公开元数据，使用 TikTok 自己签发的访客身份；**绝不伪造 msToken**（伪造比没有更糟，会被整体 gate）。
@@ -104,7 +112,8 @@ TikTok 是 guided init 的正式来源（`guidedInit: true`）：
 | 条目归一化 | ✅ | `normalize_tiktok_video()`（yt-dlp 条目）与 `parse_tiktok_item()`（web itemStruct）产出等价 `DiscoveredContent`；毫秒 duration 启发式换算为秒，`source_metadata.tiktok_aweme_id` 保留稳定身份 |
 | 后台 discovery producer | ✅ | `TiktokDiscoveryProducer` 镜像 YouTube producer：`tiktok_discovery_runs` 每日执行 ledger、`min_interval_minutes` 节流、`daily_feed_budget` / `daily_tag_budget` / `daily_user_budget`、pool 缺口门、统一 candidate pipeline 入队 |
 | 平台族注册 | ✅ | `tiktok` 独立平台族（`requires_overseas_network=True`、`routed_by_network_mode=True`、host `tiktok.com`） |
-| source-auth 契约 | ✅ | `auth_tiktok()` 可选凭据语义：无 Cookie 时与 YouTube 同形（公开源 · 无需登录，`verify_method="none"`）；配置 Cookie 后 `credential="present"` + `verify_method="live_probe"`（passport beat 探针） |
+| source-auth 契约 | ✅ | `auth_tiktok()` 可选凭据语义：无 Cookie 时与 YouTube 同形（公开源 · 无需登录，`verify_method="none"`）；配置 Cookie 后 `credential="present"` + `verify_method="live_probe"`（passport beat 探针）；capability map（`_TIKTOK_CAPABILITY_AUTH_MODES`）逐能力区分 discover（optional-credential，访客就绪）与 profile / bootstrap / incremental / native-save（login-required，随同步 Cookie + 探针 verdict 投影 ready / stale / login_required / unverified），guided init 据此做 bootstrap 准入 |
+| 站内收藏（native save） | ✅ | `ExtensionAdapterDefinition("tiktok", ...)` 注册进七平台 broker；`extension/src/content/native-save/tiktok.ts` 在已登录标签页执行收藏（目标 `TikTok Favorites`，watch-later 回退 favorite）；自动同步默认关闭，真实写入需精确命名授权；真实受控 E2E 待人工授权运行 |
 | 关键词规划器接入 | ✅ | `tiktok` 加入 `_PLANNER_PLATFORMS`；claim 的词优先喂 `tiktok_search`（原词不压缩，search 挂载时），未挂载时喂 `tiktok_tag`（压缩为 hashtag）；used/failed 生命周期跟随实际消费词的策略（P1.7），P1.8 keyword id 随候选传递 |
 | 头图 CDN 白名单 | ✅ | `tiktokcdn.com` / `tiktokcdn-us.com` / `tiktokcdn-eu.com` 进入 image_cache 头图白名单，走 `[network]` 海外路由（与 i.ytimg.com 同构，不进 CN 直连名单）；真实 For-You 封面经代理抓取 200 实测通过 |
 | `discover --source tiktok` CLI | ✅ | 手动触发正式 `TiktokDiscoveryProducer`（`enabled_override` 旁路 daemon 总开关，镜像 douyin 分支形态） |

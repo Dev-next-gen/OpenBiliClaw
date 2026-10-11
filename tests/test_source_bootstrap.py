@@ -974,9 +974,7 @@ def test_v2ex_guided_init_only_seeds_authoritative_completion(
     assert memory.update_calls == (1 if expected else 0)
 
 
-@pytest.mark.parametrize(
-    "source", ("xhs", "dy", "yt", "zhihu", "reddit", "linuxdo", "tiktok")
-)
+@pytest.mark.parametrize("source", ("xhs", "dy", "yt", "zhihu", "reddit", "linuxdo", "tiktok"))
 @pytest.mark.parametrize("status", ("degraded", "failed", "login_required", "timeout", "skipped"))
 def test_guided_init_does_not_seed_non_success_statuses(source: str, status: str) -> None:
     from openbiliclaw.sources.source_bootstrap import seed_guided_init_attempts

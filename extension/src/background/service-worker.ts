@@ -54,7 +54,7 @@ import {
   ensureTiktokTaskRecovery,
   pollTiktokTaskNow,
 } from "./tiktok-task-dispatcher.ts";
-import type { TiktokScopeResult } from "../content/tt/task-executor.ts";
+import type { TiktokScopeResult } from "../content/tiktok/task-executor.ts";
 import {
   startYtTaskPolling,
   handleYtTaskAlarm,
