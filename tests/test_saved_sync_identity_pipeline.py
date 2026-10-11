@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -310,6 +311,8 @@ def test_legacy_duplicate_item_keys_consolidate_without_losing_recommendations(
 def test_legacy_duplicate_keeps_selected_temporal_evidence_publication_as_one_group(
     tmp_path: Path,
 ) -> None:
+    # This tests grouped evidence preservation, not expiry of a fixed-date event.
+    published_at = datetime.now(UTC).isoformat()
     path = tmp_path / "duplicate-temporal-group.db"
     database = Database(path)
     database.initialize()
@@ -345,7 +348,7 @@ def test_legacy_duplicate_keeps_selected_temporal_evidence_publication_as_one_gr
                 "current",
                 0.95,
                 "近期事件仍有效",
-                "2026-08-11T00:00:00Z",
+                published_at,
             ),
         ],
     )
@@ -367,7 +370,7 @@ def test_legacy_duplicate_keeps_selected_temporal_evidence_publication_as_one_gr
         "temporal_class": "current",
         "temporal_confidence": 0.95,
         "temporal_reason": "近期事件仍有效",
-        "published_at": "2026-08-11T00:00:00Z",
+        "published_at": published_at,
         "pool_status": "fresh",
     }
 
