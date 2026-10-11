@@ -3500,6 +3500,7 @@ def _normalize_inspiration_search_backends(value: object) -> tuple[str, ...]:
         "bing_rss": "bing_rss",
         "bing-rss": "bing_rss",
         "exa": "exa",
+        "parallel": "parallel",
         "local": "local_cache",
         "cache": "local_cache",
         "local_cache": "local_cache",

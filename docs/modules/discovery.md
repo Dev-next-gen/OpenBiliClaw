@@ -1500,3 +1500,15 @@ for each epoch:
 24. **长期避雷项必须进入发现前置上下文**：近期 negative exemplars 只能覆盖短期样本，`disliked_topics` 才代表稳定画像里的长期避让；因此 discovery 的共享 `profile_summary` 必须显式携带它，供 query 生成和内容评估共同消费
 25. **画像摘要要保留决策上下文而不是只传兴趣标签**：Search / Trending / Explore 都在问“什么内容适合这个人”，只传兴趣名会让模型退化成关键词扩写；因此 `build_profile_summary()` 同步携带认知风格、价值观、当前阶段、MBTI、近期觉察、当前洞察、来源分布和兴趣来源时间，但仍按前若干项裁剪，避免无界 prompt 膨胀
 26. **评估批次保留成功 sibling**：keyed partial payload 先写入有效评分，只对缺失 ID 使用共享 depth=3 / 六次额外请求预算；预算耗尽仍未解析的候选标记 `evaluation_response_missing`，不以零分拒绝，而是在 claim token 仍匹配时无 attempt 增量回到 `pending_eval`。
+
+### 可选 Parallel grounding
+
+在 `[discovery]` 中设置 `inspiration_search_backends = ["local_cache", "platform_sources", "parallel", "bing_rss", "exa", "you", "serply"]` 可启用 [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp)。默认配置不变。服务免费匿名提供 Fast 模式搜索，有速率限制，无需账户、API Key、Node CLI 或新增依赖。仅把 grounding query 发送到固定端点，不附带画像、Cookie 或本地凭据；沿用 `[network]` 海外出口策略。
+
+| 已实现功能 | 状态 |
+|---|---|
+| 可选 Parallel MCP 标题 / URL / 摘录 grounding，既有 fallback 与 cooldown | ✅ |
+
+公开 API：`ParallelInspirationProvider(timeout_seconds=6.0, transport=None)` 实现 `begin_stage()` 和 `search(query, *, limit)`；由 `build_inspiration_search_provider()` 按 `parallel` 名称装配。单次搜索在同一绝对期限内完成 MCP 初始化与调用，支持 JSON / SSE，限制响应大小，取消向上传播。工具错误、限流或空结果进入已有后备链。摘录只作为关键词灵感证据，不直接写推荐池；本变更不增加聊天工具或页面抓取接口。
+
+该配置可由现有配置文件 / CLI `config-show` 使用，后端共享行为覆盖插件、桌面 Web 和移动 Web 的发现流程；不新增各端设置控件。

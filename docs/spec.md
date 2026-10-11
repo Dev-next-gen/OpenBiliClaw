@@ -752,6 +752,14 @@ localhost。两个入口互斥，默认 HTTP 不变。
 
 ---
 
+可选关键词 grounding：在 `[discovery].inspiration_search_backends` 中加入 `parallel`；默认链不变，见 [Discovery](modules/discovery.md#可选-parallel-grounding)。
+
+```text
+query inspiration → configured provider chain → optional Parallel Search MCP
+                  ← title / URL / excerpts    ← https://search.parallel.ai/mcp
+                  → keyword grounding (no direct recommendation-pool writes)
+```
+
 ## 4. 技术选型
 
 | 模块 | 技术方案 | 说明 |

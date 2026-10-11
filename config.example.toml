@@ -703,6 +703,7 @@ inspiration_search_enabled = true
 # Exa 不可用/返回空时再用 You.com 兜底，最后是 Serply。远端 MCP 需要在本机
 # mcporter 配置里有 `exa` 和 / 或 `you` server；填写 exa_api_key / you_api_key /
 # serply_api_key 后则直连 HTTP API。
+# 可选加入 "parallel"：匿名 Parallel Search MCP grounding，无需 API Key；默认链不变。
 inspiration_search_backends = ["local_cache", "platform_sources", "bing_rss", "exa", "you", "serply"]
 # Exa / You.com / Serply 直连 API Key（可选）。填写后走 Python 直连 HTTP API，
 # 不再依赖本机 mcporter CLI；留空时回退到 mcporter（若已安装，Serply 无 mcporter
