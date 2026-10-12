@@ -882,11 +882,20 @@ function sendScopeExecuteMessage(): void {
   const stillCurrent = (): boolean => progress === sent && taskTabId === tabId && taskInFlight;
   const attempt = async (): Promise<void> => {
     if (!stillCurrent()) return;
+    let ackTimer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await chrome.tabs.sendMessage(tabId, {
-        action: "TIKTOK_SCOPE_EXECUTE",
-        data: { ...sent },
-      });
+      const ack = await Promise.race([
+        chrome.tabs.sendMessage(tabId, {
+          action: "TIKTOK_SCOPE_EXECUTE",
+          data: { ...sent },
+        }),
+        new Promise<never>((_resolve, reject) => {
+          ackTimer = setTimeout(() => reject(new Error("scope_acceptance_timeout")), 1_000);
+        }),
+      ]);
+      if (ack?.accepted !== true || ack.task_id !== sent.task_id || ack.scope !== sent.scope) {
+        throw new Error("scope_not_accepted");
+      }
     } catch {
       if (!stillCurrent()) return;
       // The document-complete fallback may run before the content script
@@ -904,6 +913,8 @@ function sendScopeExecuteMessage(): void {
         status: "failed",
         error: "sendMessage_failed",
       });
+    } finally {
+      if (ackTimer !== undefined) clearTimeout(ackTimer);
     }
   };
   void attempt();

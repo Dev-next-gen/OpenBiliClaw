@@ -1,5 +1,31 @@
 # TikTok 来源验收报告
 
+## 2026-10-12 明确视频授权后的原生收藏续修
+
+范围 `capability-increment`，基线 `68f0fb4f`，repair worktree `.worktrees/tiktok-full-readiness`。结论仍为 **incremental only**。用户已明确授权指定公开视频加入 `TikTok Favorites`，不再缺少授权；下面的实际结果取代旧段落中的“待授权/未执行”，历史记录不追改为通过。
+
+本轮修复：
+
+- 实机同页存在两个 `favorite-icon`：当前按钮 y=499，下一条预加载视频按钮 y=1222，而视口高 723。后者 CSS 仍可见，导致 `native_control_not_found`。现在只接受完整视口内的控件，拒绝零尺寸、裁切及歧义；优先点击唯一内层原生 button。
+- 当前桌面收藏图标变金色时，aria 文案仍为“添加到收藏”。补充只针对 `favorite-icon` 内唯一 `SpanBookmarkWrapper` SVG 的已观察金色识别，避免已选中时反向点击。
+- 四列表正式复查先出现喜欢完成后 `task_idle_timeout`；新增内容端持久接收 ACK 和后台有界核对，复现并修复空/错配 ACK 被误当投递成功。修复后三个普通列表在同一四 scope 任务中 empty/complete，历史单独返回缺少入口。一次成功不能证明所有时序都已稳定。
+- **金色并不是持久化证明**：TikTok 即时 `synced` / `already_synced` 也必须经过新文档的刷新只读确认。缺失 document instance、刷新失败或结果不再选中时均保留 `native_confirmation_not_observed`，不重复点击。新增成功/失败刷新、无文档与单次点击回归。
+
+| 链路 | 状态 | 本轮实际证据与限制 |
+| --- | --- | --- |
+| 精确授权与正式后端 | PASS | 当前用户明确确认同一公开视频；正常 Uvicorn/create_app + 真实 Chrome 已安装扩展/登录态，数据与 SQLite 隔离，模型/network 配置保持真实值。自动同步和周期调度均保持关闭。 |
+| 指定视频站内收藏 | FAIL（已真实执行） | 页面自然发出指定视频的收藏 POST，action=1、HTTP 200、业务状态 0，图标临时变金色；刷新后 0/3/8/15/25 秒均未收藏，四次只读收藏采集均显式 empty/complete。不得以 HTTP 成功或临时颜色宣称持久化成功。每次未确认后先只读核验，未盲目重复 toggle，未取消收藏。 |
+| 最终连续账号采集 | 三 scope PASS / 历史 FAIL | 任务 `92100a57-8d9c-4cf2-bc00-f422e74fd635` 的喜欢、收藏、关注均 empty/complete；历史 `history_entry_not_found`，整个四 scope 任务仍 failed。没有把缺入口当空历史或 N/A。 |
+| 非空画像与周期增量 | BLOCKED | 没有已持久保存的非空账号信号。未伪造事件/复制画像，未开启生产同步。正式 init 的上一轮 empty_signals 仍未解除；本轮未重跑无信号的模型链路。 |
+| 手动点击对照 | WAITING | 已请用户对同一视频手动收藏并刷新，区分程序点击与账号/网站持久化问题。Chrome 直连标签页查询仍超时；没有证据归因于 Intel CPU。 |
+| 最终正式 native-save 构建 | unit PASS / real NOT_RUN | 最后加入金色识别与强制刷新后，暂停进一步写入等待对照；上述请求/刷新证据来自前序构建和临时诊断。不得冒充最终正式 executor 全链路通过。 |
+
+[脱敏证据](testing/assets/2026-10-12-tiktok-authorized-native-save/real-e2e.json) 与 [六字段原生结果](testing/assets/2026-10-12-tiktok-authorized-native-save/native-save-result.json) 分开保存，不含 Cookie、账号 ID、完整 URL、原始 DOM、请求体或返回体。临时网络诊断只观察页面自行发出的请求，不重放接口或签名。
+
+验证：针对性新增用例先红后绿；扩展全量 **1809 passed / 0 failed**；原生保存针对性 **56 passed**，scope ACK 三项回归先红后绿、相关生命周期 **37 passed**；后端账号队列/初始化/readiness/增量及文档索引 **112 passed**。Ruff 与 MyPy（318 文件）PASS；Chrome/Firefox 正式构建及各 22 assets 均 PASS；Firefox 安装版真测 NOT_RUN。Python 实现未改，不把上一轮全量 pytest 的两个既有失败改写为通过。
+
+最终安装包摘要 `206e517b18a5462c8ae8742812dab6c57304ccf8e5397f5e9ccb7632d6e0524d`，已复制到注册目录并热重载；不含临时诊断。沿既有任务通道补充接收 ACK，架构图与模块文档已同步；CLI、配置、安装流程与权限未改变。本轮未合并或发布。隔离后端与私有诊断服务已停止；临时配置、Cookie、SQLite、原始诊断、日志、控制脚本和依赖软链已清理，正式构建保留在注册目录。
+
 ## 2026-10-12 慢加载与连续列表交接修复
 
 范围 `capability-increment`，基线 `0077f7f8`，独立 repair worktree；结论 **incremental only**。本轮正式构建的三 scope 空列表连续采集通过，但不能据此声明非空画像、历史和原生收藏已验收。脱敏记录见 [real-e2e.json](testing/assets/2026-10-12-tiktok-readiness/real-e2e.json)。

@@ -614,3 +614,23 @@ test("delivery retries stop after cleanup and fail within the delivery budget", 
     } finally { Date.now = actualNow; resetTiktokTaskStateForTest(); state.restore(); }
   }
 });
+
+test("scope delivery retries missing or mismatched acceptance instead of silently losing the task", async () => {
+  for (const first of [undefined, { accepted: false }, { accepted: true, task_id: "old", scope: "tt_like" }]) {
+    const state = installChromeMock();
+    installAlarmsMock();
+    let attempts = 0;
+    state.sendMessageImpl = async (_tab, message) => {
+      if (++attempts === 1) return first;
+      return { accepted: true, ...(message as { data: { task_id: string; scope: string } }).data };
+    };
+    try {
+      await executeTask({ id: "missing-acceptance", type: "tt_like" });
+      await settleSessionWrites();
+      await new Promise(resolve => setTimeout(resolve, 550));
+      assert.equal(attempts, 2);
+      assert.deepEqual(state.sentMessages[0], state.sentMessages[1]);
+      assert.equal(taskResultPosts(state).length, 0);
+    } finally { resetTiktokTaskStateForTest(); state.restore(); }
+  }
+});

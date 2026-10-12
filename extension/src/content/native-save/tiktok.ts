@@ -212,7 +212,7 @@ function isEffectivelyVisible(element: HTMLElement, root: Document): boolean {
   return true;
 }
 
-function selected(element: HTMLElement): boolean {
+function selected(element: HTMLElement, root: Document): boolean {
   if (
     element.getAttribute("aria-pressed") === "true" ||
     element.getAttribute("aria-checked") === "true" ||
@@ -223,13 +223,29 @@ function selected(element: HTMLElement): boolean {
   const label = (
     element.getAttribute("aria-label") ?? element.title ?? element.textContent ?? ""
   ).trim();
-  return /(?:Remove from Favorites|取消收藏|已收藏)/.test(label);
+  if (/(?:Remove from Favorites|取消收藏|已收藏)/i.test(label)) return true;
+  // Observed desktop UI (2026-10-12) keeps its "添加到收藏" label after
+  // selection, changing only this bookmark glyph to TikTok's gold token.
+  // This is optimistic UI evidence: the runner must reload and verify it.
+  if (element.getAttribute("data-e2e") !== "favorite-icon") return false;
+  const icons = element.querySelectorAll<SVGElement>('span[class*="--SpanBookmarkWrapper"] svg');
+  return icons.length === 1 && root.defaultView?.getComputedStyle(icons[0]).color === "rgb(250, 206, 21)";
+}
+
+function isWithinViewport(element: HTMLElement, root: Document): boolean {
+  const view = root.defaultView;
+  if (!view) return false;
+  const rect = element.getBoundingClientRect();
+  // TikTok preloads the next article below the viewport with display/visibility
+  // still enabled. It must never become a candidate for the current URL.
+  return rect.width > 0 && rect.height > 0 && rect.left >= 0 && rect.top >= 0 &&
+    rect.right <= view.innerWidth && rect.bottom <= view.innerHeight;
 }
 
 function favoriteControls(root: Document, currentUrl: string, contentId: string): HTMLElement[] {
   if (tiktokRouteVideoId(currentUrl) !== contentId) return [];
   return Array.from(root.querySelectorAll<HTMLElement>(FAVORITE_CONTROL_SELECTOR)).filter(
-    (element) => isEffectivelyVisible(element, root),
+    (element) => isEffectivelyVisible(element, root) && isWithinViewport(element, root),
   );
 }
 
@@ -281,10 +297,18 @@ export function createTiktokBrowserEnvironment(
         .join("\n");
     },
     findFavoriteControls(contentId) {
-      return favoriteControls(root, readUrl(), contentId).map((element) => ({
-        isSelected: () => selected(element),
-        click: () => element.click(),
-      }));
+      return favoriteControls(root, readUrl(), contentId).flatMap((element) => {
+        // The current desktop favorite-icon is a wrapper around a native
+        // button. Clicking the wrapper does not activate that inner action.
+        const buttons = Array.from(element.querySelectorAll<HTMLButtonElement>("button"))
+          .filter((button) => isEffectivelyVisible(button, root) && isWithinViewport(button, root));
+        if (buttons.length > 1) return [];
+        const action = buttons[0] ?? element;
+        return [{
+          isSelected: () => selected(element, root) || selected(action, root),
+          click: () => action.click(),
+        }];
+      });
     },
     sleep(ms) {
       return new Promise((resolve) => setTimeout(resolve, ms));

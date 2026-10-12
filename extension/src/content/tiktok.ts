@@ -545,6 +545,7 @@ interface ScopeExecutionRecord {
   accepted_items?: TiktokScopeResult["items"];
 }
 let activeScopeKey: string | null = null;
+let acceptedScopeKey: string | null = null;
 let memoryRecord: ScopeExecutionRecord | null = null;
 
 async function readScopeRecord(): Promise<ScopeExecutionRecord | null> {
@@ -578,15 +579,23 @@ async function deliverScopeResult(result: TiktokScopeResult): Promise<void> {
 }
 
 /** Keep canonical rows in extension storage; page storage contains only an opaque resume pointer. */
-export async function executeTiktokScopeOnce(data: TiktokScopeExecuteMessage): Promise<void> {
+export async function executeTiktokScopeOnce(
+  data: TiktokScopeExecuteMessage,
+  onAccepted?: (accepted: boolean) => void,
+): Promise<void> {
   const key = `${data.task_id}:${data.scope}`;
-  if (activeScopeKey !== null) return;
+  if (activeScopeKey !== null) {
+    onAccepted?.(activeScopeKey === key && acceptedScopeKey === key);
+    return;
+  }
   activeScopeKey = key;
+  acceptedScopeKey = null;
   let record: ScopeExecutionRecord | null = null;
   try {
     const previous = await readScopeRecord();
     const matches = previous?.message.task_id === data.task_id && previous.message.scope === data.scope;
     if (matches && previous.result) {
+      onAccepted?.(true);
       activeScopeKey = null;
       await deliverScopeResult(previous.result);
       return;
@@ -596,6 +605,11 @@ export async function executeTiktokScopeOnce(data: TiktokScopeExecuteMessage): P
     };
     await persistScopeRecord(record);
     sessionStorage.setItem(SCOPE_POINTER_KEY, record.token);
+    acceptedScopeKey = key;
+    // A resolved sendMessage without an explicit ACK can mean the old
+    // document ignored the scope or unloaded before persisting its pointer.
+    // Acknowledge only when a new document can safely resume this execution.
+    onAccepted?.(true);
     const result = await runScope(data, record);
     record.result = result;
     await persistScopeRecord(record);
@@ -606,6 +620,7 @@ export async function executeTiktokScopeOnce(data: TiktokScopeExecuteMessage): P
     activeScopeKey = null;
     await deliverScopeResult(result);
   } catch (error) {
+    if (acceptedScopeKey !== key) onAccepted?.(false);
     // Failure to persist the resume record must stop before any navigation.
     // The background dispatcher still owns durable reporting of this failure.
     const items = record?.accepted_items ?? [];
@@ -615,7 +630,10 @@ export async function executeTiktokScopeOnce(data: TiktokScopeExecuteMessage): P
       ...(record?.viewer_handle ? { viewer_handle: record.viewer_handle } : {}),
       ...(record?.viewer_sec_uid ? { viewer_sec_uid: record.viewer_sec_uid } : {}),
       error: `scope_persistence_failed: ${String(error)}` });
-  } finally { if (activeScopeKey === key) activeScopeKey = null; }
+  } finally {
+    if (activeScopeKey === key) activeScopeKey = null;
+    if (acceptedScopeKey === key) acceptedScopeKey = null;
+  }
 }
 
 async function resumeTiktokScopeAfterNavigation(): Promise<void> {
@@ -628,10 +646,14 @@ async function resumeTiktokScopeAfterNavigation(): Promise<void> {
 
 export function registerTiktokScopeExecutor(): void {
   if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.onMessage) return;
-  chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender, _sendResponse) => {
+  chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender, sendResponse) => {
     if (message.action !== "TIKTOK_SCOPE_EXECUTE" || !isValidTiktokScopeExecuteMessage(message.data)) return false;
-    void executeTiktokScopeOnce(message.data);
-    return false;
+    const data = message.data;
+    void executeTiktokScopeOnce(data, accepted => {
+      try { sendResponse({ accepted, task_id: data.task_id, scope: data.scope }); }
+      catch { /* Navigation may close the port; the persisted pointer survives. */ }
+    });
+    return true;
   });
   void resumeTiktokScopeAfterNavigation().catch(() => { /* Dispatcher timeout reports unavailable recovery storage. */ });
 }

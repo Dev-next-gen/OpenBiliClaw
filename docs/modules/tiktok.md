@@ -296,3 +296,11 @@ PYTHONPATH=src python scripts/smoke_tiktok_pipeline.py --config /path/to/config.
 | 原生保存登录判定 | 未出现控件不立即当作登出；共享正向登录证据且明确登出优先，保存和只读确认均使用 20 秒预算。 |
 
 后端公共 API、配置、来源矩阵未改变。实机诊断观察到文档 complete 后登录控件仍需超过 12 秒；当前账号设置页未暴露历史入口，返回 `history_entry_not_found`，不能声明空历史或全能力通过。非空画像、周期增量与站内收藏仍以[真实验收台账](../platform-source-acceptance.tiktok.md)为准。
+
+## 原生收藏授权实测续修（2026-10-12）
+
+已实现：过滤屏幕外预加载视频的收藏控件、选择唯一内层 button、识别当前桌面的金色书签，并强制刷新只读确认 TikTok 的即时成功。公开 API 和账号采集协议未改变；具体语义见 [extension](extension.md#tiktok-原生收藏视口与持久化确认2026-10-12) 与 [saved-sync](saved-sync.md#tiktok-真实写入与刷新确认2026-10-12)。
+
+真实授权写入已经执行，观察到站点发出指定视频的加入收藏请求且返回成功；不过刷新后仍未收藏，收藏列表也返回显式空态，故不能把请求成功当作持久化或画像初始化通过。后续需手动点击对照查清客户端点击/账号或网站持久化边界。历史入口及非空画像/周期增量仍以 [验收台账](../platform-source-acceptance.tiktok.md) 为准，未扩大为完整来源已验收。
+
+账号任务的 `TIKTOK_SCOPE_EXECUTE` 新增接收回执：恢复记录/指针写好后再 ACK，后台有界等待并校验 task/scope，缺失回执重投同一只读 scope。该 ACK 只证明可恢复接收，不能代表列表采集成功或画像完成。

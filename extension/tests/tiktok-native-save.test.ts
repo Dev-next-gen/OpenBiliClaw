@@ -265,3 +265,80 @@ test("native DOM auth rejects upload-only and explicit logout while accepting ca
     assert.equal(env.isLoginRequired!(), flag === false || marker === "top-login-button");
   }
 });
+
+function viewportDocument(rectangles: Array<{ x: number; y: number; width: number; height: number }>): Document {
+  const elements = rectangles.map(rect => ({
+    hidden: false, parentElement: null, style: {}, hasAttribute: () => false,
+    querySelectorAll: () => [], getAttribute: () => null,
+    getBoundingClientRect: () => ({ ...rect, left: rect.x, top: rect.y, right: rect.x + rect.width, bottom: rect.y + rect.height }),
+  }));
+  return {
+    defaultView: { innerWidth: 1280, innerHeight: 723, getComputedStyle: () => ({ display: "block", visibility: "visible" }) },
+    querySelectorAll: () => elements,
+  } as unknown as Document;
+}
+
+test("native DOM excludes next video's preloaded offscreen favorite button", () => {
+  const env = createTiktokBrowserEnvironment(viewportDocument([
+    { x: 729, y: 499, width: 48, height: 78 },
+    { x: 729, y: 1222, width: 48, height: 78 },
+  ]), task.content_url);
+  assert.equal(env.findFavoriteControls(CONTENT_ID).length, 1);
+});
+
+test("native DOM rejects zero-sized and clipped controls, preserves visible ambiguity", () => {
+  for (const [rectangles, count] of [
+    [[{ x: 729, y: 499, width: 0, height: 0 }], 0],
+    [[{ x: 729, y: -20, width: 48, height: 78 }], 0],
+    [[{ x: 1270, y: 499, width: 48, height: 78 }], 0],
+    [[{ x: 729, y: 499, width: 48, height: 78 }, { x: 920, y: 499, width: 48, height: 78 }], 2],
+  ] as const) {
+    const env = createTiktokBrowserEnvironment(viewportDocument([...rectangles]), task.content_url);
+    assert.equal(env.findFavoriteControls(CONTENT_ID).length, count);
+    assert.equal(env.findFavoriteControls("999999999").length, 0);
+  }
+});
+
+
+test("native DOM clicks the unique inner button and reads its selected state", () => {
+  const doc = viewportDocument([{ x: 729, y: 499, width: 48, height: 78 }]);
+  const outer = doc.querySelectorAll<HTMLElement>("fixture")[0];
+  const button = viewportDocument([{ x: 729, y: 499, width: 48, height: 48 }]).querySelectorAll<HTMLElement>("fixture")[0];
+  let clicks = 0;
+  button.click = () => { clicks++; };
+  button.getAttribute = name => name === "aria-pressed" ? String(clicks > 0) : null;
+  outer.click = () => { throw new Error("wrapper is not the actual button"); };
+  outer.querySelectorAll = (() => [button]) as typeof outer.querySelectorAll;
+  const env = createTiktokBrowserEnvironment(doc, task.content_url);
+  const [control] = env.findFavoriteControls(CONTENT_ID);
+  assert.equal(control.isSelected(), false);
+  control.click();
+  assert.equal(clicks, 1);
+  assert.equal(control.isSelected(), true);
+});
+
+test("native DOM refuses ambiguous inner buttons", () => {
+  const doc = viewportDocument([{ x: 729, y: 499, width: 48, height: 78 }]);
+  const outer = doc.querySelectorAll<HTMLElement>("fixture")[0];
+  const buttons = viewportDocument([{ x: 729, y: 499, width: 48, height: 48 }, { x: 729, y: 550, width: 48, height: 25 }]).querySelectorAll<HTMLElement>("fixture");
+  outer.querySelectorAll = (() => buttons) as typeof outer.querySelectorAll;
+  assert.equal(createTiktokBrowserEnvironment(doc, task.content_url).findFavoriteControls(CONTENT_ID).length, 0);
+});
+
+test("native DOM recognizes the observed bookmark state despite a stale add label", () => {
+  for (const [marker, color, count, expected] of [
+    ["favorite-icon", "rgb(250, 206, 21)", 1, true],
+    ["favorite-icon", "rgba(255, 255, 255, 0.9)", 1, false],
+    ["favorite-icon", "rgb(255, 0, 0)", 1, false],
+    ["favorite-icon", "rgb(250, 206, 21)", 2, false],
+    ["unrelated-icon", "rgb(250, 206, 21)", 1, false],
+  ] as const) {
+    const doc = viewportDocument([{ x: 729, y: 499, width: 48, height: 78 }]);
+    const outer = doc.querySelectorAll<HTMLElement>("fixture")[0];
+    outer.getAttribute = name => name === "data-e2e" ? marker : name === "aria-label" ? "添加到收藏。" : null;
+    outer.querySelectorAll = ((selector: string) => selector === 'span[class*="--SpanBookmarkWrapper"] svg'
+      ? Array.from({ length: count }, () => ({})) : []) as typeof outer.querySelectorAll;
+    doc.defaultView!.getComputedStyle = (() => ({ display: "block", visibility: "visible", color })) as typeof getComputedStyle;
+    assert.equal(createTiktokBrowserEnvironment(doc, task.content_url).findFavoriteControls(CONTENT_ID)[0].isSelected(), expected);
+  }
+});

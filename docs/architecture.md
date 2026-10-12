@@ -35,10 +35,10 @@ background ─ background admission (default 3) ──────┘
 
 TikTok cookie sync: validated effective credential change → runtime lane handoff → refreshed search client
 TikTok account tasks: bootstrap_profile(scopes[4], max_items_per_scope, profile_update)
-                      → inactive owned tab → viewer-owned active list only
+                      → inactive owned tab → durable scope acceptance ACK → viewer-owned active list only
                       → bounded durable scope results / same-account fence
                       → staged canonical result → account-scoped event receipt → profile
-TikTok native save: local membership → durable broker → exact current video → positive favorite proof
+TikTok native save: local membership → durable broker → exact current video → selected bookmark → reload/read-only persisted proof
 
 guided init: signals → preferences → full profile commit
                                   → discovery → evaluation → copy → canonical pool ready

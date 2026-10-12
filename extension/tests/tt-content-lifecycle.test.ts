@@ -278,3 +278,31 @@ test("next scope arriving before prior result ACK is collected in the same docum
     assert.equal((env.values[recordKey] as { message: TiktokScopeExecuteMessage }).message.scope, "tt_collect");
   } finally { env.restore(); }
 });
+
+test("scope acceptance is acknowledged only after its durable resume pointer exists", async () => {
+  const env = environment();
+  let accepted = false;
+  let duplicateAccepted = false;
+  try {
+    await executeTiktokScopeOnce(message("durable-accept"), (ok) => {
+      accepted = ok;
+      const record = env.values[recordKey] as { token: string };
+      assert.equal(env.session.get(pointerKey), record.token);
+      assert.equal(env.tab.clicks, 0);
+      void executeTiktokScopeOnce(message("durable-accept"), value => { duplicateAccepted = value; });
+    });
+    assert.equal(accepted, true);
+    assert.equal(duplicateAccepted, true);
+    assert.equal(env.tab.clicks, 1);
+  } finally { env.restore(); }
+});
+
+test("failed scope persistence never acknowledges execution", async () => {
+  const env = environment({ storageFails: true });
+  let accepted: boolean | undefined;
+  try {
+    await executeTiktokScopeOnce(message("no-ack-storage"), value => { accepted = value; });
+    assert.equal(accepted, false);
+    assert.equal(env.tab.clicks, 0);
+  } finally { env.restore(); }
+});
