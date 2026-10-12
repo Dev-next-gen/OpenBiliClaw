@@ -1,5 +1,13 @@
 # TikTok 来源验收报告
 
+## 2026-10-13 只读续验
+
+用户要求继续处理后，基于 `d0fbabc5` 重建隔离正常后端，真实模型/network 配置不变、所有自动写入与周期同步保持关闭。Chrome 浏览器可枚举但标签页查询仍超时，无法完成真实鼠标点击对照；项目扩展的 WebSocket 和登录态同步正常。
+
+首个正式包 `tt_collect` 任务超时，不能推断列表为空。随后临时只读阶段诊断观察到页面从未就绪进入正向登录身份、本人资料页和已证明的收藏 root，任务最终 empty/complete、0 行。恢复正式包后再执行只读收藏采集，同样 completed、empty/complete、0 行。没有看到此前测试视频延迟保存，也没有据此判定 Cookie 失效、Intel 不兼容或所有超时都已解决。没有再次收藏/取消收藏；未用失败结果或空态生成画像。
+
+本轮无功能代码修改，新增[脱敏续验证据](testing/assets/2026-10-13-tiktok-readonly-resume/real-e2e.json)。真实收藏持久化仍待手动点击刷新对照，非空画像与周期增量继续 **BLOCKED**；历史本轮未重跑，上一轮 `history_entry_not_found` 未解除。正式包已按摘要恢复，源码和产物均不含临时探针；隔离后端、诊断服务已停止，私有配置/Cookie/数据库/原始诊断/日志及依赖软链已清理。文档索引测试 5 passed，diff 检查通过。
+
 ## 2026-10-12 明确视频授权后的原生收藏续修
 
 范围 `capability-increment`，基线 `68f0fb4f`，repair worktree `.worktrees/tiktok-full-readiness`。结论仍为 **incremental only**。用户已明确授权指定公开视频加入 `TikTok Favorites`，不再缺少授权；下面的实际结果取代旧段落中的“待授权/未执行”，历史记录不追改为通过。
