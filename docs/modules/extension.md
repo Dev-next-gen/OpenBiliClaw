@@ -57,17 +57,17 @@ Popup 的 LLM 实例、默认链与模块选择支持 `cheaperinference`（Cheap
 | 自动任务标签页默认静音（issue #163） | ✅ | 新增 `background/task-tab.ts` 共享助手 `createTaskTab()`：所有由后台 dispatcher 自动打开的标签页（B 站搜索兜底、小红书、抖音、知乎、Reddit、Linux.do、V2EX、微博、YouTube、原生保存任务与新开 E2E 平台页）创建后立即 `tabs.update(tabId, { muted: true })`，避免抖音等自动播放页面在无人值守时突然出声。Chrome 的 `tabs.create` 不接受 `muted`（Firefox 100+ / Safari 14+ 接受），因此统一走「先 create、再 update 静音」的跨引擎路径；静音状态跨后续 `tabs.update` 导航保持，用户可随时在标签栏手动取消静音，静音失败不影响任务执行。复用已有用户标签页（原生保存 / E2E 的 reuse 分支）保持原样，不会改用户自己标签的静音状态。 |
 | 抖音任务状态跨 event page 持久化（issue #140） | ✅ | Firefox MV3 的 background scripts 是 event page（空闲约 30 秒即被浏览器卸载），Chrome MV3 service worker 同样会被回收；`dy-task-dispatcher.ts` 此前把任务执行状态全放在模块级内存、超时靠模块级 `setTimeout`，worker 卸载后超时回调丢失、迟到的 `DY_SEARCH_RESULT` 被丢弃、任务标签页残留。现在进行中任务的快照（任务体、任务 tab id、deadline、search/hot/feed/bootstrap 进度）在每次状态迁移时串行写穿到 `chrome.storage.session`（key `openbiliclaw_dy_active_task`），超时改用一次性 `chrome.alarms`（`openbiliclaw-dy-task-timeout`）作为权威兜底，模块级 `setTimeout` 仅作同进程精确快速路径。新 worker 经 `ensureDyTaskRecovery()`（service worker 启动、poll alarm、超时 alarm 与 `DY_*_RESULT` 消息入口共用同一 barrier）恢复快照：迟到的结果继续回传 partial/final 并正常收尾，已过期的记录补报 `failed + task_timeout` 并关闭记录的任务 tab，任务 tab 已消失时立即以 `task_tab_closed` 结算；无记录时按 `openbiliclaw_dy_task=1` URL 标记清扫孤儿任务标签页（不动用户自己的抖音标签）。`cleanupTask()` 同步清除 session 记录与超时 alarm；manifest 的 `storage` / `alarms` 权限 Chrome 与 Firefox 均已声明，无需新增。回归：`tests/dy-task-recovery.test.ts` 8 条（快照持久化、迟到结果、过期兜底、alarm 入口、tab 丢失、孤儿清扫、提前 alarm 不误伤、异关键词忽略）。 |
 | 来源周期回拉逐源开关 | ✅ | 插件 side panel 与桌面 Web 的平台源配置页为每个支持周期回拉的来源增加“允许扩展周期回拉”开关，默认关闭；调度页提供总开关 `source_incremental_enabled`，后端同时检查总开关与来源开关，只有两者都开启才入队周期 bootstrap 任务。关闭某来源时其 scheduler-owned 待执行任务会被取消。 |
-| 收藏夹 / 稍后再看 | ✅ | 推荐卡和 delight banner 的「时钟=稍后再看」「星星=收藏」统一把 canonical identity 交给 `/api/saved/*`；optimistic 状态只代表本地保存，平台失败不取消按下态。独立「稍后 / 收藏」页采用后端状态驱动：六个平台都保留手动同步入口；`pending` 只有在带非空 task ID 时才视为执行中并禁用重复动作，空 task ID 仍是可手动同步的本地保存；`unsupported_content_type` 才是 local-only / 无按钮，`unsupported_adapter_missing` 仅作滚动升级重试兼容；`extension_required` 显示连接已安装登录态插件的指引和重试，成功态展示真实 `resolved_target`。页面级「同步未同步内容（N）」继续保留，任务轮询完成后按平台显示成功/总数。移除只删本地 membership。「全部稍后看」只移除本地保存成功项。设置页默认关闭「保存时自动同步到对应平台」，首次开启确认账号写入警告；手动同步不受开关影响。saved/config 的单个 Abort deadline 覆盖设备会话交换与 401 强制刷新；批量同步和重试加载会在重渲染前捕获列表级焦点并优先还原到同一动作。 |
-| 原生保存验证边界 | ✅（6/6 executor + 真实账号验证） | 本地 / CI / 默认 smoke 只验证默认关闭、local-first membership、列表与任务状态。六平台真实 favorite / watch-later 只能在 `allow_state_changing=true` 且 exact platform/action/public content ID/expected target 的精确命名授权同时存在时，经 production durable broker 执行。Task 10 为 trusted-local `/api/extension/e2e/run` 增加 dedicated 模式：exact envelope 与 generic actions 互斥，扩展仅提交一个 canonical item 到 `/api/saved/{action}/sync`、严格关联同一 task/item/resolved target，再用 six-field callback 回传。通用捕捉 E2E runner 即使收到有效 envelope 也固定拒绝 favorite/bookmark。Reddit / X / YouTube / 小红书 / 抖音 / 知乎六个 executor 均已接入并完成 fixture；登录态只存在于已安装扩展，job 不含账号 ID、Cookie 或账号凭据，小红书仅可携带 saved membership 已有的公开笔记导航 `xsec_token/xsec_source`，授权与结果仍只有安全字段。一般 runner 只在 tab 创建/加载阶段占用共享 mutex；XHS 手动 native-save 使用 exact route + identity/control fence，可越过后台 discovery mutex并由 single-flight poll 防重复领取。YouTube duplicate exact `OpenBiliClaw` rows 优先 checked proof，否则稳定复用一个且不删除列表；知乎按 current `收藏 / 已收藏` aria 状态同步到 `知乎收藏`，不支持命名收藏夹且永不点击初始“已收藏”；小红书支持 current `noteContainer/collect-wrapper`。完整矩阵以 runbook 为准。 |
+| 收藏夹 / 稍后再看 | ✅ | 推荐卡和 delight banner 的「时钟=稍后再看」「星星=收藏」统一把 canonical identity 交给 `/api/saved/*`；optimistic 状态只代表本地保存，平台失败不取消按下态。独立「稍后 / 收藏」页采用后端状态驱动：七个平台都保留手动同步入口；`pending` 只有在带非空 task ID 时才视为执行中并禁用重复动作，空 task ID 仍是可手动同步的本地保存；`unsupported_content_type` 才是 local-only / 无按钮，`unsupported_adapter_missing` 仅作滚动升级重试兼容；`extension_required` 显示连接已安装登录态插件的指引和重试，成功态展示真实 `resolved_target`。页面级「同步未同步内容（N）」继续保留，任务轮询完成后按平台显示成功/总数。移除只删本地 membership。「全部稍后看」只移除本地保存成功项。设置页默认关闭「保存时自动同步到对应平台」，首次开启确认账号写入警告；手动同步不受开关影响。saved/config 的单个 Abort deadline 覆盖设备会话交换与 401 强制刷新；批量同步和重试加载会在重渲染前捕获列表级焦点并优先还原到同一动作。 |
+| 原生保存验证边界 | ✅（7/7 executor 注册；前六平台有真实账号验证，TikTok 授权 E2E 已运行，持久化未确认） | 本地 / CI / 默认 smoke 只验证默认关闭、local-first membership、列表与任务状态。七平台真实 favorite / watch-later 只能在 `allow_state_changing=true` 且 exact platform/action/public content ID/expected target 的精确命名授权同时存在时，经 production durable broker 执行。Task 10 为 trusted-local `/api/extension/e2e/run` 增加 dedicated 模式：exact envelope 与 generic actions 互斥，扩展仅提交一个 canonical item 到 `/api/saved/{action}/sync`、严格关联同一 task/item/resolved target，再用 six-field callback 回传。通用捕捉 E2E runner 即使收到有效 envelope 也固定拒绝 favorite/bookmark。Reddit / X / YouTube / 小红书 / 抖音 / 知乎 / TikTok 七个 executor 均已接入并完成 fixture；登录态只存在于已安装扩展，job 不含账号 ID、Cookie 或账号凭据，小红书仅可携带 saved membership 已有的公开笔记导航 `xsec_token/xsec_source`，授权与结果仍只有安全字段。一般 runner 只在 tab 创建/加载阶段占用共享 mutex；XHS 手动 native-save 使用 exact route + identity/control fence，可越过后台 discovery mutex并由 single-flight poll 防重复领取。YouTube duplicate exact `OpenBiliClaw` rows 优先 checked proof，否则稳定复用一个且不删除列表；知乎按 current `收藏 / 已收藏` aria 状态同步到 `知乎收藏`，不支持命名收藏夹且永不点击初始“已收藏”；小红书支持 current `noteContainer/collect-wrapper`。完整矩阵以 runbook 为准。 |
 | 原生保存不确定确认复核 | ✅ | 抖音 / 小红书 / YouTube / 知乎的 executor 在 mutation 后返回 `native_confirmation_not_observed` 时，runner 会先 abort 并 await 原 document sender，再重载 exact content URL；新 content document 必须通过 `NATIVE_SAVE_READY` 返回不同的 `document_instance_id`，随后才接收独立 `execution_id` 的 `verification_only`。平台 verifier 可只读打开必要弹窗并轮询 target 后置条件，但不创建容器、不点击目标项；知乎仅读取精确内容的全局 favorite 状态，任何复核路径都不点击“收藏”“已收藏”或“取消收藏”。明确命中后返回 `already_synced`，其它 verifier 终态或异常都保留原失败码。runner 在 `about:blank` 阶段先持久登记 task-tab owner，首次导航与 reload 都禁止普通 collector；callback 要求 2xx 并以同一 payload 有界重试，tab 删除不确定时保留 session 恢复记录。 |
 | 持续补货与通知 | ✅ | 运行状态已接入 popup，service worker 会拉取高置信通知并回写发送状态 |
-| 设置页源策略控制 | ✅ | side panel 设置页已按「模型 / 平台源 / 调度 / 高级功能 / 通用 / 日志」分 tab；模型 tab 直接维护 LLM v2 实例：同一 Provider 可新建多个渠道，编辑名称 / 模型 / Base URL / API Key / 协议选项，停用或删除前会检查默认链及模块链引用；实例编辑器可把当前未保存草稿发到无写入的 `/api/config/discover-models`，从该端点的 OpenAI-compatible `GET /models` 填充可编辑模型下拉，失败保留手填值；Effort 下拉是本地建议并允许任意手填。实例卡可按草稿执行 `kind="llm_instance"` 真实探测，默认链支持加入、移除、上移、下移及整链测试。首个已启用实例自动进入默认链；API Key 留空会保留已保存密钥，明确勾选才清除。模块自定义链在 side panel 只读展示并提供 PC Web 深链，保存会完整回传 `routes`，不会压扁桌面端配置。Embedding provider / 模型 / 凭据 / 探测继续留在模型 tab；新增高级功能 tab 固定包含「推荐增强 / 多模态处理 / 搜索词生成」三个 section。平台源 tab 按 Bilibili / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / 通用网页 / 候选池配比独立分块，可开关各平台 discovery，编辑各源预算和候选池占比，并按已有事件向后端请求推荐比例；调度 tab 暴露后台暂停、断开宽限、真实 refresh / probe 频率和猜测兴趣参数；日志 tab 除用单个「完整日志路径」编辑后端日志文件位置外，还内置「异常报警」区：拉取 `GET /api/diagnostics/alerts` 展示 LLM / Embedding 请求异常（限流、鉴权失败、超时、响应异常、全部实例失败、embedding 熔断），带错误/警告摘要徽标、中文错误码说明与合并计数，面板可见时每 15 秒轮询并消费 runtime-stream `diagnostics.alert` 实时刷新 |
+| 设置页源策略控制 | ✅ | side panel 设置页已按「模型 / 平台源 / 调度 / 高级功能 / 通用 / 日志」分 tab；模型 tab 直接维护 LLM v2 实例：同一 Provider 可新建多个渠道，编辑名称 / 模型 / Base URL / API Key / 协议选项，停用或删除前会检查默认链及模块链引用；实例编辑器可把当前未保存草稿发到无写入的 `/api/config/discover-models`，从该端点的 OpenAI-compatible `GET /models` 填充可编辑模型下拉，失败保留手填值；Effort 下拉是本地建议并允许任意手填。实例卡可按草稿执行 `kind="llm_instance"` 真实探测，默认链支持加入、移除、上移、下移及整链测试。首个已启用实例自动进入默认链；API Key 留空会保留已保存密钥，明确勾选才清除。模块自定义链在 side panel 只读展示并提供 PC Web 深链，保存会完整回传 `routes`，不会压扁桌面端配置。Embedding provider / 模型 / 凭据 / 探测继续留在模型 tab；新增高级功能 tab 固定包含「推荐增强 / 多模态处理 / 搜索词生成」三个 section。平台源 tab 按 Bilibili / 小红书 / 抖音 / YouTube / TikTok / X / 知乎 / Reddit / 通用网页 / 候选池配比独立分块，可开关各平台 discovery，编辑各源预算和候选池占比，并按已有事件向后端请求推荐比例；调度 tab 暴露后台暂停、断开宽限、真实 refresh / probe 频率和猜测兴趣参数；日志 tab 除用单个「完整日志路径」编辑后端日志文件位置外，还内置「异常报警」区：拉取 `GET /api/diagnostics/alerts` 展示 LLM / Embedding 请求异常（限流、鉴权失败、超时、响应异常、全部实例失败、embedding 熔断），带错误/警告摘要徽标、中文错误码说明与合并计数，面板可见时每 15 秒轮询并消费 runtime-stream `diagnostics.alert` 实时刷新 |
 | 海外网络模式设置 | ✅ | v0.3.165+ 通用 tab 与桌面 Web 对齐提供 `direct / system / custom` 三档和自定义代理地址；加载、保存及「测试网络」均提交同一 `network.mode + proxy` 草稿。默认直连明确忽略环境代理，只有 system 继承，custom 缺地址由后端 400 拒绝。 |
 | 封面图评估设置 | ✅ | side panel 高级功能 tab 的「多模态处理」section 补齐 `[discovery]` 多模态评估控制：可开关候选封面参与 LLM 评估，并编辑图文 batch、封面最大边、JPEG 质量和图片准备超时；保存 payload 会保留已有 discovery 字段后覆盖 `multimodal_*` 参数，与桌面 Web 设置页保持同一配置面。图像 Embedding 能力是独立开关，P1/P3 依赖它而不依赖候选封面 LLM 评估。 |
 | 搜索词生成模式选择器 | ✅ | popup 高级功能 tab 的「搜索词生成」section（与桌面 Web `/web` 设置页一致）新增「搜索词生成模式」下拉 `#cfgKeywordGenerationMode`，三档 经典 / 混合 / 灵感（option value `legacy` / `hybrid` / `inspiration`，两端 option 值 / 顺序 / 文案一致），并附「混合最贵」成本提示。加载从 `cfg.discovery.keyword_generation_mode` 回填（缺省 `legacy`），保存把该键写进 discovery payload（**在 `...(state.runtimeConfig?.discovery \|\| {})` 展开之后**，避免加载快照覆盖用户选值）。它由后端 `inspiration_search_enabled` / `inspiration_replace_merged_keywords` 两布尔派生（`config.toml` 仍只存两布尔），`PUT /api/config` 把 mode 翻译回两布尔并规范化，非法值 → 422。详见 [config 模块的 `keyword_generation_mode` 映射表](config.md)。 |
 | 回复语气设置与测试 | ✅ | 桌面 Web（`/web` 设置页「回复语气」section）与插件 side panel（「画像理解」页签同区）均可编辑 `[soul] reply_style`（单行，≤200 字，追加式语气指令，影响对话 / 推荐文案 / 画像）与 `[soul] dialogue_tone_prompt`（多行 textarea，≤1000 字，整体替换聊天语气块，只影响聊天）；两端都有「测试语气」按钮：先经 `PUT /api/config` 局部保存这两个字段（字段级合并、空串可清空、即时热重载），再 POST `/api/chat` 发固定试句并把真实回复内联展示在按钮下方，无需切到聊天页。详见 [config 模块](config.md)。 |
 | 桌面 Web 设置页对齐插件 | ✅ | 桌面 Web（`/web`）设置页 `src/openbiliclaw/web/desktop/` 的可配置面与插件 side panel 拉齐：模型 tab 补 `llm.concurrency`、DeepSeek `reasoning_effort`，并提供 LLM / embedding 测试按钮（当前表单草稿 → `/api/config/probe-service`，不保存配置；v0.3.155+ 备选子页另有「测试备选 Provider」按钮走 `kind="llm_fallback"` 精确探测备选，且备选下拉会禁用与主 Provider 同名的选项并对同名旧配置显示行内警告）；平台源 tab 补完整 X(Twitter) 源块（`enabled` / `cookie_env` / 三项预算 / `request_interval` / `min_interval`）+ `GET /api/sources/x/status` 源健康提示、YouTube `min_interval_minutes`、知乎源块（`enabled` / search-hot-feed-creator-related 五项预算 / `request_interval` / `min_interval`）和候选池 X / 知乎占比；调度 tab 补 9 个真实 runtime 参数（`extension_disconnect_grace_seconds` / `refresh_check_interval_seconds` / `signal_event_threshold` / `feedback_batch_threshold` / `trending_refresh_minutes` / `explore_refresh_minutes` / `discovery_limit` / `proactive_push_interval_seconds` / `speculator_idle_interval_minutes`）；通用 tab 补局域网访问密码（`/auth/status` + `/auth/admin`，同源 loopback 视为可信本机）与开机自启（`/autostart-status` + `/autostart/apply`）。桌面 Web 同时移除了运行时不消费的 `discovery_cron` 旧字段，与插件一致；推荐页平台过滤 tab 会先按 `config.sources` / `pool_source_shares` 中启用的平台展示，再合并当前推荐卡真实来源，点击后只过滤当前已加载列表，命中为空时保留空结果状态 |
-| 平台源设置页卡片化 | ✅ | 桌面 Web（`/web`）和插件 side panel 的「平台源」tab 都改成**一个来源一张卡**：卡面常驻「图标 / 名称 / 来源与接入徽章 / 最近状态」，桌面端另在卡面直接编辑候选池占比并保留启用下拉，配置区默认折叠、按需展开。展开区对十二来源使用同一套分段骨架——`接入方式`（Cookie 粘贴 / 令牌 / 插件登录态 / 公开接口四种形态共用同一容器和脱敏预览）、`发现分支与每日预算`（分支开关与该分支预算并排成表；无 `source_modes` 的来源只渲染预算列，不伪造开关）、`节流`、`<平台> 专属`（B 站 agent-browser、Reddit 命令后端、Bangumi 条目类型与初始化上限、V2EX PAT / Node/Tab 配置、微博登录态 init 任务、GitHub 公开用户名与可选 PAT）、`验证`。停用的来源只留卡面、不可展开，配置项仍在 DOM 中参与保存 payload。桌面端把原先独立的「来源接入状态」列表与「Cookie / 登录凭据状态」折叠区并入各自卡片（`#sourceCredentialList` 已移除，状态与凭据渲染统一从 `#sourceStatusList` 取行），候选池占比另有一张带权重条形图的总览卡与卡面双向同步；两端新增吸底保存栏，显示「已修改 N 项」并就地保存（桌面端另有「放弃修改」按最近一次后端快照回滚）。插件保存栏固定在扩展视口底部，滚动区预留操作栏与安全区高度，长表单最后一项不会被遮挡。保存按钮在无修改和请求进行中禁用；输入、LLM 草稿及建议比例等程序化修改都会解锁，成功后重新禁用，失败时保留修改供重试。所有输入框 id 与保存 payload 未变，仅重排信息架构。 |
+| 平台源设置页卡片化 | ✅ | 桌面 Web（`/web`）和插件 side panel 的「平台源」tab 都改成**一个来源一张卡**：卡面常驻「图标 / 名称 / 来源与接入徽章 / 最近状态」，桌面端另在卡面直接编辑候选池占比并保留启用下拉，配置区默认折叠、按需展开。展开区对十三来源使用同一套分段骨架——`接入方式`（Cookie 粘贴 / 令牌 / 插件登录态 / 公开接口四种形态共用同一容器和脱敏预览）、`发现分支与每日预算`（分支开关与该分支预算并排成表；无 `source_modes` 的来源只渲染预算列，不伪造开关）、`节流`、`<平台> 专属`（B 站 agent-browser、Reddit 命令后端、Bangumi 条目类型与初始化上限、V2EX PAT / Node/Tab 配置、微博登录态 init 任务、GitHub 公开用户名与可选 PAT）、`验证`。停用的来源只留卡面、不可展开，配置项仍在 DOM 中参与保存 payload。桌面端把原先独立的「来源接入状态」列表与「Cookie / 登录凭据状态」折叠区并入各自卡片（`#sourceCredentialList` 已移除，状态与凭据渲染统一从 `#sourceStatusList` 取行），候选池占比另有一张带权重条形图的总览卡与卡面双向同步；两端新增吸底保存栏，显示「已修改 N 项」并就地保存（桌面端另有「放弃修改」按最近一次后端快照回滚）。插件保存栏固定在扩展视口底部，滚动区预留操作栏与安全区高度，长表单最后一项不会被遮挡。保存按钮在无修改和请求进行中禁用；输入、LLM 草稿及建议比例等程序化修改都会解锁，成功后重新禁用，失败时保留修改供重试。所有输入框 id 与保存 payload 未变，仅重排信息架构。 |
 | 统一来源接入状态 | ✅ | `GET /api/sources/status`（`SourcesStatusResponse`）只读本地配置、Cookie 文件、登录心跳、任务历史和 X 健康表；它不访问平台，也不执行 Reddit 命令。B站三字段完整为 `ready`、不全为 `partial`；抖音本地 Cookie 存在仅为 `unverified`，不冒充实际登录成功；小红书 / 知乎以插件最近上报的布尔登录态为权威，区分从未同步 `unverified`、显式登出 `missing`、新鲜已登录 `ready`、过期已登录 `stale`，知乎仅在从未同步时回落任务历史；Reddit `rdt` 只检查本地 credential 文件，非 rdt 后端显示 `unverified`；X 沿用已持久化的真实健康结果，YouTube 为 `no_auth`；Bangumi、V2EX 与 GitHub 使用匿名 / 可选 PAT 的 auth contract；GitHub PAT 拒绝只降低凭据验证态，不阻断匿名公开 discovery。插件 side panel、桌面 Web 与 setup 引导页三端加载**同一个** `src/openbiliclaw/web/shared/source-status.js`（插件由 `scripts/build.mjs` 在 build 时复制进包，因为 MV3 CSP 禁止从后端拉脚本；复制产物 `popup/shared/` 已 gitignore，勿提交），页面可见时每 30 秒只轮询本地后端；`ready` 显示「凭据已就绪」而不是「接入可用」，仅 `ok` 表示已有真实健康验证。凭据表单改由 `GET /api/sources/credentials` 的 `form` 描述符驱动：`extension_only`（小红书 / 知乎）**不渲染可粘贴输入框**（后端不存它们的 cookie），V2EX 与 GitHub 都只显示 PAT 是否存在、不回读明文；GitHub 仅接受固定专用环境变量或配置写入。状态标签与色调现由 `item.auth` 派生（`auth_required=false` → `credential` → `verification`），legacy `state` 仅在 `auth` 缺失或畸形时兜底；`verify_method` 作为独立的证据强度维度渲染，用字形（◆ 联网证据 / ◇ 本地或间接证据 / — 无验证能力）与边框编码，不依赖颜色。 |
 | 需要海外出网的来源提示 | ✅ | `SourceStatusItem` 增加 `requires_overseas_network`（平台是否在 GFW 外）与 `network_hint`（可直接渲染的文案，仅在 `[network].mode = direct` 时非空）。**清单与两份文案都只在 `sources/platforms.py` 一处**：海外桶 = bangumi / youtube / twitter / reddit / github，其中 bangumi / youtube / github 的后端 HTTP 出网由 `[network].mode` 掌管（GitHub 始终走后端 official REST client；X 走 `twitter_cli`+curl_cffi、Reddit 走 `rdt`/OpenCLI 子进程或插件，`direct` 从不清 `HTTP(S)_PROXY`，改设置修不好），因此两类给不同措辞。桌面 Web 与扩展 popup 都只做「`network_hint` 非空且该来源已启用就原样渲染」，不认识任何平台名，加新平台=改后端一行；`tests/test_source_network_hints.py` 钉死这一点 |
 | 来源首页问题定位 | ✅ | 共享 `source-status.js` 新增 `describeSourceIssue()`，只把已启用来源的缺凭据、不完整、过期、失败、受阻、限流和未知契约判为问题，并保留后端 `detail` 原文；普通 `unverified` / `syncing` 不误报。桌面首页将这组「来源接入」问题与 B站/X/画像的「账号同步」问题分开命名后组合显示。微博公开 discovery 可匿名，个人 init 只在登录态 heartbeat + 任务桥 ready 时运行。 |
@@ -76,6 +76,7 @@ Popup 的 LLM 实例、默认链与模块选择支持 `cheaperinference`（Cheap
 | B 站 Cookie 自动同步 | ✅ | service worker 会读取 `SESSDATA` / `bili_jct` / `DedeUserID` 三件套并推送到本地后端；后端暂未启动时切到 1 分钟重试，成功后恢复 60 分钟兜底刷新；后端 runtime-stream 也可发 `bilibili_cookie_sync_requested` 让扩展立刻回传 |
 | B 站扩展搜索兜底任务 | ✅ | service worker 轮询 `/api/sources/bili/next-task` 并响应 `bili_task_available` 即时 kick；后台 tab 打开 `search.bilibili.com/all?keyword=...`，严格日期偏好还会携带 `pubtime_begin/pubtime_end`，B 站 content script 抓渲染后的搜索结果卡片，回传 `BILI_TASK_RESULT` 到 `/api/sources/bili/task-result`。该链路在后端 API search 冷却或短期 DOM fallback 降级信号存在且扩展在线时由 producer 入队，不取代 API 主路径；软偏好不向网页搜索下推硬边界。
 | 抖音 Cookie 自动同步 | ✅ | service worker 会读取 douyin.com Cookie header 并推送到 `/api/sources/dy/cookie`；后端保存到 `data/douyin_cookie.json`，供 `discover --source douyin` / `discover-douyin` 在无环境变量覆盖时使用；冷启动、runtime-stream 请求和 alarm 兜底都会触发同步 |
+| TikTok Cookie 自动同步 | ✅ | service worker 在检测到 tiktok.com 登录（sessionid / sessionid_ss / sid_tt 至少其一）后读取完整 Cookie jar 推送到统一凭据端点 `/api/sources/tiktok/credential`（结构校验 + passport 会话心跳 live probe，与设置页粘贴同一强度），落盘 `data/tiktok_cookie.json`；访客身份无 Cookie 是合法状态，未登录 / 登出时静默跳过不打扰；冷启动、`cookies.onChanged`（按平台防抖）、runtime-stream `tiktok_cookie_sync_requested` 和小时 alarm 都会触发 |
 | 小红书 / 知乎 / Linux.do 登录态同步 | ✅ | service worker 分别判断 `xiaohongshu.com` 的 `web_session`、`zhihu.com` 的 `z_c0`、`linux.do` 的 `_t` 是否存在且非空，只把 `logged_in` 布尔值推送到各自 `/login-state`；Cookie 值不上传，后端也不保存或重放这三站 Cookie。冷启动、cookie 变化、runtime-stream 请求和每小时 alarm 都可刷新布尔心跳；这里只读取浏览器 Cookie store，不打开、刷新或请求平台页面。 |
 | Bangumi 身份自动识别 | ✅ | 新增 `*://*.bgm.tv/*`、`*://*.bangumi.tv/*` host permission（商店披露需同步）与两段脚本：MAIN-world `bgm-identity-bridge` 读取页面公开 `CHOBITS_UID`（>0 即已登录，登出不上报），isolated `content/bangumi.js` 只从本人专属导航区（idBadgerNeue/dock）解析 `/user/<username>`（泛化 avatar 兜底因真机实证会命中时间线路人已删除，抓不到就报空），`POST /api/sources/bangumi/identity` 经后端 `GET /v0/users/{username}` 权威比对 `id == uid` 后持久化（不一致只存 uid 并 WARNING），供 guided init/CLI 零配置识别账号（优先级：令牌 /v0/me > 显式用户名 > 扩展上报）。Bangumi 不是行为采集平台：只上报公开的 uid+username，不读 Cookie，不采集浏览行为 |
 | Cookie 同步重试按平台隔离 | ✅ | B站 / 抖音 / X / Reddit / 小红书登录态 / 知乎登录态 / Linux.do 登录态各用独立 retry alarm；一个平台同步成功不会重置另一个平台的快速重试，`cookies.onChanged` debounce 也按平台隔离。Linux.do alarm 为 `openbiliclaw-cookie-sync-linuxdo`，且 payload 永远只有布尔值。旧共享 alarm 仍兼容触发一轮全量同步后清除。 |
@@ -326,9 +327,9 @@ popup 仅在明确 503 时回退旧聊天端点，普通网络中断继续轮询
 - 会启动知乎任务轮询；收到 runtime stream 的 `zhihu_task_available` 后立即打开带 `openbiliclaw_zhihu_task` 标记的知乎任务 tab。`bootstrap_events` 初始化 / 事件 smoke 使用前台 tab，会把浏览记录、收藏夹和个人动态条目回传到 `/api/sources/zhihu/task-result`；只有后端任务 payload 显式带 `profile_update=true` 时，新增条目才会由 API 自动写入 memory 并进入增量画像 pipeline。`search` / `hot` / `feed` / `creator` / `related` discovery 使用后台 tab，并把知乎候选分别回传为 `zhihu_search` / `zhihu_hot` / `zhihu_feed` / `zhihu_creator` / `zhihu_related`。任务 tab 不启动普通 `startCollector`，因此 CLI smoke、guided init 和 discovery 任务不会额外写入 `/api/events`
 - 会启动 Reddit 任务轮询；收到 runtime stream 的 `reddit_task_available` 后立即打开 / 复用带 `openbiliclaw_reddit_task` 标记的 Reddit 任务 tab。`bootstrap_events` 会先读 `/api/me.json`，再用当前浏览器的 `reddit.com` 登录态读取 saved、upvoted 和 subscribed subreddit，回传 `reddit_saved` / `reddit_upvoted` / `reddit_subscribed` 初始化信号；`search` / `hot` / `subreddit` / `related` discovery 则读取同源 `.json` endpoint，回传 `reddit_search` / `reddit_hot` / `reddit_subreddit` / `reddit_related` 候选到 `/api/sources/reddit/task-result`。dispatcher 在 tab load 后会对 content script listener 做短重试，吸收真实页面 complete 早于 isolated script 注册的时序抖动；service worker 冷启动和热 reload 后会在顶层启动 Reddit poll alarm，避免只靠 `onInstalled/onStartup` 导致新来源不轮询
 - 会启动 Linux.do 任务轮询；收到 `linuxdo_task_available` 后打开带稳定 query marker 的 `https://linux.do/?openbiliclaw_linuxdo_task=1` task tab。`bootstrap_events` 使用前台 tab 并先 GET `/session/current.json` 正面确认当前 username，再读 bookmarks / likes / read history；五种 discovery 使用后台 tab。任务模式只安装 executor，不运行普通 collector；结果只包含归一化 topic rows 与结构化错误，经 authenticated `/api/sources/linuxdo/task-result` 回传
-- 扩展账号周期回拉由 `source_incremental_enabled=false` 全局默认关闭，且每个来源的 `sources.<slug>.incremental_enabled` 也默认关闭；关闭时后端不会检查 presence、预排账号任务、打开或切换标签页。只有总开关改为 `true`、对应来源开关也改为 `true`，且画像就绪、guided init 空闲、runtime-stream presence 在线时，才会按配置周期复用现有 XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX bootstrap scope。七源全局串行并继续走现有 dispatcher、登录态和 task-result 协议，不新增权限或抓取范围。这是“已安装扩展在线周期回拉”，不是后端绕过浏览器登录态的账号同步。抖音仍以 `douyin_incremental_hours=0` 逐源关闭；手动初始化 / 拉取和后台 discovery 不受影响。微博不参加周期回拉；GitHub 不创建任何扩展任务，始终使用后端官方 REST
+- 扩展账号周期回拉由 `source_incremental_enabled=false` 全局默认关闭，且每个来源的 `sources.<slug>.incremental_enabled` 也默认关闭；关闭时后端不会检查 presence、预排账号任务、打开或切换标签页。只有总开关改为 `true`、对应来源开关也改为 `true`，且画像就绪、guided init 空闲、runtime-stream presence 在线时，才会按配置周期复用现有 XHS / 抖音 / YouTube / 知乎 / Reddit / Linux.do / V2EX / TikTok bootstrap scope。八源全局串行并继续走现有 dispatcher、登录态和 task-result 协议，不新增权限或抓取范围。这是“已安装扩展在线周期回拉”，不是后端绕过浏览器登录态的账号同步。抖音仍以 `douyin_incremental_hours=0` 逐源关闭；手动初始化 / 拉取和后台 discovery 不受影响。微博不参加周期回拉；GitHub 不创建任何扩展任务，始终使用后端官方 REST
 - 以 `client=background` 连接 `/api/runtime-stream` 后，后端先发送各浏览器登录态同步请求；Linux.do 的 `linuxdo_login_state_sync_requested` 只读取 `_t` 存在性并回传 bool。如果 `[sources.twitter].enabled=true`，还会收到 `x_cookie_sync_requested`，立即把当前 `x.com` 的 `auth_token` / `ct0` Cookie 回传到 `/api/sources/x/cookie`；B 站与抖音也保留各自 Cookie 请求。小红书 / 知乎 / Linux.do 由 startup、`cookies.onChanged` 和独立小时 alarm 兜底。同步请求只在用户配置的 OpenBiliClaw 后端与扩展间传递，不会为刷新配置页打开或请求平台页面。后端也把这条 WebSocket 作为 extension presence 信号
-- 以 `client=background` 连接 `/api/runtime-stream` 后，后端先发送 `xhs_login_state_sync_requested` / `zhihu_login_state_sync_requested`，扩展只读取 Cookie store 并上报两个布尔心跳；如果 `[sources.twitter].enabled=true`，还会收到 `x_cookie_sync_requested`，立即把当前 `x.com` 的 `auth_token` / `ct0` Cookie 回传到 `/api/sources/x/cookie`，覆盖后端重启或 WebSocket 重连前已经发生的浏览器 Cookie 变化；如果本地缺少 B 站 Cookie，还会收到 `bilibili_cookie_sync_requested`；如果 `[sources.douyin].enabled=true` 且缺少抖音 Cookie，会收到 `douyin_cookie_sync_requested`。小红书 / 知乎另由 startup、`cookies.onChanged` 和独立小时 alarm 兜底，X 也保留 startup、变更监听和小时 alarm 兜底。所有同步请求只在本机后端与扩展间传递，不会为刷新配置页打开或请求平台页面。后端也把这条 WebSocket 作为 extension presence 信号：连接建立时允许后台 LLM 工作，最后一个连接断开后进入 `extension_disconnect_grace_seconds` 宽限；服务端 reader 会主动 `receive()` 检测 idle disconnect，避免浏览器断开后 presence 卡住
+- 以 `client=background` 连接 `/api/runtime-stream` 后，后端先发送 `xhs_login_state_sync_requested` / `zhihu_login_state_sync_requested`，扩展只读取 Cookie store 并上报两个布尔心跳；如果 `[sources.twitter].enabled=true`，还会收到 `x_cookie_sync_requested`，立即把当前 `x.com` 的 `auth_token` / `ct0` Cookie 回传到 `/api/sources/x/cookie`，覆盖后端重启或 WebSocket 重连前已经发生的浏览器 Cookie 变化；如果本地缺少 B 站 Cookie，还会收到 `bilibili_cookie_sync_requested`；如果 `[sources.douyin].enabled=true` 且缺少抖音 Cookie，会收到 `douyin_cookie_sync_requested`；`[sources.tiktok].enabled=true` 且缺少 TikTok Cookie 时会收到 `tiktok_cookie_sync_requested`（访客身份合法，扩展未登录 tiktok.com 时静默跳过）。小红书 / 知乎另由 startup、`cookies.onChanged` 和独立小时 alarm 兜底，X 也保留 startup、变更监听和小时 alarm 兜底。所有同步请求只在本机后端与扩展间传递，不会为刷新配置页打开或请求平台页面。后端也把这条 WebSocket 作为 extension presence 信号：连接建立时允许后台 LLM 工作，最后一个连接断开后进入 `extension_disconnect_grace_seconds` 宽限；服务端 reader 会主动 `receive()` 检测 idle disconnect，避免浏览器断开后 presence 卡住
 - 收到 `extension_e2e_run` 后会调用 `background/e2e-runner.ts`：按目标平台打开或复用标签页，复用时也会导航到平台稳定入口，等待页面 ready，再向 content script 发送 `OBC_E2E_EXECUTE`；runner 会先等待捕捉 buffer settle 并 flush，再把执行结果 POST 到 `/api/extension/e2e/result`，sendMessage / tab load / 整体运行都有独立超时，避免单个平台页面卡住整个后端请求
 - generic event 若请求 `favorite` / `bookmark` mutation，runner 在打开 tab 前固定拒绝并且不发送 `OBC_E2E_EXECUTE`；即使同时塞入有效 envelope 也不放行。这是刻意的关联 fence：通用入口页 DOM runner 无法把授权的 `content_id` / target 绑定到将要点击的元素。只有 backend 发布的 dedicated event（空 generic platforms/actions + exact `native_save_authorization`）会调用单一 `/api/saved/{action}/sync`，轮询同一 durable task 并以 exact item/resolved action/target 关联后构造 six-field callback
 - 连接 `/api/runtime-stream` 之前会先 HTTP `GET /api/ping`（2 秒超时）做一次活性探针，仅在后端可达时再 `new WebSocket(...)`。这样 fresh-install 用户先装扩展、后启动后端时，`chrome://extensions` 不会被浏览器层 WebSocket 失败计入「错误」徽标；探针失败后按固定 1 秒间隔继续重试，直到后端可达。探活不再打 `/api/health`：health 会同步等一次 embedding 实探（冷缓存可达数秒），2 秒预算下会把健康但冷启动的后端误判为掉线；`/api/ping` 返回 404（旧后端）时回退 `/api/health`（12 秒预算）
@@ -379,7 +380,7 @@ native-save mutation；dedicated 分支也不会开入口 tab 或发送 `OBC_E2E
 已存在且已由 canonical URL/content type/content ID 与 production route 共同验证的 exact saved
 membership 到 production sync API。后端发送比总 run timeout 少 1 秒的绝对 execution deadline，
 把最后 1 秒保留给 six-field callback，避免 registry cleanup 竞态；endpoint 解析、认证刷新、
-每个请求与按剩余时间截断的 poll sleep 均在相应 deadline 内。membership URL 预检与六平台
+每个请求与按剩余时间截断的 poll sleep 均在相应 deadline 内。membership URL 预检与七平台
 executor 使用相同的 exact host/path/query/fragment/port 规则，并同时匹配 fallback 后的
 `resolved_action`。真实 broker 数据流为
 `extension_native_save_jobs -> /api/sources/<slug>/next-task -> installed extension`，扩展只用
@@ -387,7 +388,7 @@ executor 使用相同的 exact host/path/query/fragment/port 规则，并同时�
 结果通过 authenticated `task-result` 回到后端。状态语义固定为
 `synced` / `already_synced` / `login_required` / `rate_limited` /
 `unsupported_content_type` / `extension_required` / `failed`，详细矩阵和安全记录格式见
-[六平台 runbook](../testing/six-platform-native-save-e2e.md)。
+[授权 E2E runbook](../testing/six-platform-native-save-e2e.md)（文件名沿六平台时期命名，现覆盖 TikTok 在内的七个平台）。
 
 content executor 的 selector 策略按平台收敛在 `src/content/e2e-executor.ts`：优先找当前页面可见的 action button / role button / aria-label，并排除“取消点赞”“已收藏”“Following”等反向或已激活状态；X / 小红书这类图标按钮会走平台专属 selector fallback，页面元素慢渲染时会在短窗口内重试。执行器只返回“是否点到了 DOM”，最终成功标准仍以后端是否在 `/api/events` 中看到对应平台、动作和时间窗口内的真实事件为准。
 
@@ -635,7 +636,7 @@ Chrome 与 Firefox manifest 只增加 `https://*.instagram.com/*`，不增加 `<
 - `/api/profile-summary.active_insights` 在 popup、桌面 Web 和移动 Web 的画像/认知更新区只展示假设、置信度、证据与既有验证态，不再渲染「准 / 不准」按钮；需要处理的假设统一从对话 tab 的「待聊确认」进入 durable 卡片。兴趣/避雷 probe 仍是推荐流内独立探针，不属于洞察确认迁移范围
 - 收到 `avoidance.probe` runtime 事件后在 inbox 渲染避雷确认卡；「确认避雷 / 搁置避雷 / 不是雷点 / 多聊聊」分别以 `confirm / defer / reject / chat` 调 `/api/avoidance-probes/respond`，其中 `chat` 进入 `scope=avoidance_probe` 的 durable turn
 - 高级功能 Tab 在桌面 Web 与 side panel 保持同一信息架构：固定为「候选评分模式 / 推荐增强 / 多模态处理 / 搜索词生成 / 认知循环预算」五个 section。候选评分下拉把 canonical `llm / shadow / learned` 显示为 `Agent（默认） / Shadow（校准观察） / Learned（仅相关性，实验性）`，明确 Learned 只应在人工运行质量门禁并确认通过后启用、只影响后续候选且不会重算已有推荐，保存时仍写 `discovery.eval_scorer`，不新增不兼容的 `agent` wire 值。推荐增强的 P1/P2/P3 都是排序信号加权而非过滤，P1/P3 依赖图像 Embedding、P2 只需文本 Embedding，P1 每个极性反馈不足 8 条时安全 no-op；关闭开关会保留缓存和参数、回退原排序且不影响主流程，关键帧和弹幕目前仅作用于 B 站。多模态 section 明确区分图像 Embedding 能力与候选封面参与 LLM 评估，两者相互独立；模型 provider / 模型 / 凭据 / 探测仍在模型 Tab，调度 Tab 只保留调度项。两端都在 discovery 快照展开后显式覆盖用户可编辑字段，切换模式或关闭开关不会丢其它高级参数。
-- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM/embedding、B 站与通用 source 浏览器、十二来源 source 开关与 discovery 预算、Bangumi 公开用户名/条目类型、V2EX PAT/Node/Tab、微博登录态 init 边界，以及 GitHub 公开用户名/可选 PAT/三种发现分支/节流/初始化上限；数据目录、SQLite、调度、更新、候选池平台配比、探针与日志参数仍由原配置面维护。通用 Tab 另有应用内 Tailnet 控制：开关、节点名、脱敏状态，以及 write-only Auth Key / OAuth Client Secret + tag 的一次性入网输入；凭据只在扩展真实连接本机后端时可写，绝不进入扩展存储或配置缓存。GitHub 凭据行明确显示“公开发现匿名，PAT 可选”，明文 PAT 不回读。
+- 设置页会通过 `/api/config` 读取并保存后端配置，保存后请求后端热重载；当前覆盖 LLM/embedding、B 站与通用 source 浏览器、十三来源 source 开关与 discovery 预算、Bangumi 公开用户名/条目类型、V2EX PAT/Node/Tab、微博登录态 init 边界，以及 GitHub 公开用户名/可选 PAT/三种发现分支/节流/初始化上限；数据目录、SQLite、调度、更新、候选池平台配比、探针与日志参数仍由原配置面维护。通用 Tab 另有应用内 Tailnet 控制：开关、节点名、脱敏状态，以及 write-only Auth Key / OAuth Client Secret + tag 的一次性入网输入；凭据只在扩展真实连接本机后端时可写，绝不进入扩展存储或配置缓存。GitHub 凭据行明确显示“公开发现匿名，PAT 可选”，明文 PAT 不回读。
 - 成功读取 `/api/config` 后，popup API 会把配置快照写入 `chrome.storage.local["openbiliclaw.config_cache"]`。后端离线时设置页会读取缓存填表，并显示缓存时间；没有缓存时显示错误横条且不伪造默认值
 - 后端返回 `degraded=true` 时，设置页会在表单顶部展示降级原因和 blocking issues；模型实例/整链测试及模型发现属于无写入恢复控制面，在 degraded 状态仍使用当前草稿执行。保存响应正常为 `reloaded=true / restart_required=false`，同一进程立即解除降级；若旧后端或异常 bootstrap 返回 `restart_required=true`，插件仍用 warning tone 提示重启，并以重启后的权威 `/api/config` 为准，不把本地表单冒充已生效配置
 - 设置页的“按已有信号建议比例”会把当前页面上尚未保存的平台开关和比例一并 POST 到 `/api/config/source-share-suggestion`，按本地事件库的平台分布填入 B 站 / 小红书 / 抖音 / YouTube 占比，用户仍需点击保存才写入 `config.toml`
@@ -830,7 +831,7 @@ npm run build
 - side panel 主聊天和内联聊天回复已由后端 `chat_turns` 持久化；仍不提供完整聊天管理界面、删除能力或跨设备同步
 - inline comment 采用轻量输入，不支持复杂反馈历史浏览
 - side panel 视觉验证当前以静态快照 + extension 构建回归为主，仍建议结合真实后端做一次手动联调
-- 七源账号周期回拉默认关闭；显式设置 `source_incremental_enabled=true` 后，还要求至少一个 background runtime-stream 连接及对应平台有效登录态。自动测试只覆盖 dispatcher/协议，真实账号烟测必须在已安装扩展环境单独执行，不能用普通网页自动化冒充；Linux.do 已完成 Chrome 安装版真实登录只读 E2E，Firefox 同等安装版验收仍待执行。GitHub 不属于这七源，不需要也不会使用已安装扩展
+- 八源账号周期回拉默认关闭；显式设置 `source_incremental_enabled=true` 后，还要求至少一个 background runtime-stream 连接及对应平台有效登录态。自动测试只覆盖 dispatcher/协议，真实账号烟测必须在已安装扩展环境单独执行，不能用普通网页自动化冒充；Linux.do 已完成 Chrome 安装版真实登录只读 E2E，Firefox 同等安装版验收仍待执行。GitHub 不属于这八源，不需要也不会使用已安装扩展
 - V2EX 任务桥已接入 `*.v2ex.com` host permission、登录布尔心跳和四个只读 scope；当前仍没有 Cookie 值上报、私信读取或站内写操作。登出心跳会清除旧 observed identity；完整收藏 scope 会驱动后端双快照 retraction outbox，错误 route、条目 / 页数截断和失败 scope 不会推进缺失计数。已安装扩展 + 真实登录浏览器 E2E 已通过；自动化回归仍不能替代不同账号、隐藏主题和大收藏量账号的额外真机覆盖
 - 浏览器通知当前只推送一条最高分未通知内容，不做通知中心或多条队列
 - 惊喜推荐当前只维护一个首屏候选位，不做多条历史收件箱；`稍后看` / `收藏`
@@ -855,3 +856,89 @@ npm run build
 Popup 按当前回合和 hop 累积 `delta`，历史刷新/会话切回可恢复临时正文；`thinking` 清掉工具中间文本，`final`/`done` 权威全文替换，未收到 `done` 仍走恢复流程。新开待聊卡片成功后自动折叠列表并滚动到卡片，防止窄窗口列表把聊天区压到零高度；失败时保留列表重试入口。HTTP 接口不变。
 
 首次发送和历史恢复使用已有 turn 直接建立 agent SSE，不在连接前用 GET 唤醒后台补算；断流后仍回到 durable GET 恢复。这样保留断线恢复，同时避免刚发送就退化为最终正文重放。
+
+### 来源卡片启用框可访问性（2026-10-10）
+
+来源关闭后卡片折叠、禁止展开，但嵌套的启用复选框必须仍可操作。`syncSourceCardEnabledState()` 以 `data-source-off` 控制折叠行为，不在包裹复选框的祖先节点设置 `aria-disabled=true`，避免读屏器和浏览器自动化把重新启用入口也判定为禁用。TikTok 安装版设置页关闭→保存→重新开启回归覆盖该边界。
+
+## TikTok full-source 修复验收（2026-10-11）
+
+- dispatcher 接受真实 `bootstrap_profile + scopes[] + max_items_per_scope`，在后台自有 tab 顺序执行四 scope；校验实际 sender tab、固定首次 viewer 身份形式，每 scope 最多 300。
+- content 只接受本人 profile 的目标列表或明确选中 tabpanel，登录墙优先；拒绝全页 DOM fallback、陌生人 profile。每轮采集先持久化再继续，整页导航重入和重复消息可恢复。
+- partial/final 使用 durable FIFO，持久 idle deadline 为 120 秒、absolute deadline 最多 360 秒，仅业务进展可延长 idle；后续 timeout 不覆盖未 ACK 行；scope 失败保留既有 rows/degraded。native-save 等待/确认阶段重新核对当前视频，防 SPA 串视频。
+- fixtures / Python↔TS 协议测试不代表已安装真站验收；Chrome 控制连接当前失败。详见 [台账](../platform-source-acceptance.tiktok.md)。
+
+后端 CI 显式使用 Node 22 执行 Python next-task → 原始 TypeScript dispatcher → API ingress 协议回归，防止两端各自单测通过却不能互通；此测试使用合成浏览器响应。
+
+
+### TikTok 登录墙文本边界
+
+TikTok 内容脚本的 `detectTiktokAccessState` 仅以页面可见文字作为登录墙文字依据，避免 SSR/翻译脚本中的登录文案误报；可见登录控件仍优先，缺少正向登录证据仍失败关闭。开发热重载可通过 `POST /api/extension/reload` 广播到当前已连接的扩展；装载路径与产物摘要必须另行核对。
+
+2026-10-14 已用该本地入口完成 TikTok 修复包实机热加载：先比较注册目录的 manifest/生成文件，保留已有配置改动，再更新实际不同的产物，核对 delivered 与重连并用新建任务页验收。Chrome 管理通道不可用不必然阻塞该路径；delivered 本身只证明广播送达，不证明收藏成功，仍须核对正式任务终态与新文档持久化结果，详见 [TikTok 验收](../platform-source-acceptance.tiktok.md)。
+
+`runScope` 在执行前有界等待可识别的已登录 viewer；本人资料导航等待页面 URL 与身份标题一致，最多 10 秒，不以点击成功代替归属证据。原 task idle/absolute deadline 与累计预算仍生效。
+
+渲染等待同时限制轮数和墙钟时间；已在本人 URL 时原地等待标题，避免重复点击资料入口导致整页导航恢复循环。
+
+本人资料归属验证兼容 `user-title` / `user-subtitle` 两个可见身份标题；必须精确匹配 viewer handle，并继续要求本人 URL。
+
+TikTok 每 scope 的基础预算由 30 秒调整为 60 秒，覆盖新增渲染等待和整页恢复；滚动预算公式、360 秒绝对上限与 120 秒 idle 限制保持。
+
+范围切换后先有界等待 `resolveTiktokScopeRoot` 成功，再进入收集器；未确认范围的容器不回退为整页扫描。
+
+
+### TikTok 分阶段渲染与回传有界等待（2026-10-11）
+
+- 本人标题出现后，喜欢/收藏标签仍可能尚未挂载；`navigateToProfileTab` 单独等待目标可见入口（最多 10 秒），然后点击并等待已证明的 scope root。实机已从提前 `scope_tab_not_found` 推进到 `liked-tab[aria-selected=true]`；列表识别尚未通过，不扩大为整页抓取。
+- 公共 API `TiktokTaskResultRetryOptions.requestTimeoutMs` 为结果回传单次尝试的可选上限，默认且最大 10 秒，覆盖 URL 解析与 POST。超时中止请求并释放串行等待，原 canonical body 留在 durable FIFO；迟到的 URL 解析不再发送 POST。回调重试不会重做上游收藏动作。
+- 已用永不完成的 POST 和迟到 URL 解析验证：失败可退出，原结果不丢失，恢复后按原 body 重放。该回归不冒充真实断连原因；本轮后续浏览器断连来自临时诊断包构建失败。
+
+
+### TikTok 当前桌面页兼容与消息注册等待（2026-10-11）
+
+| 已实现行为 | 验证边界 |
+| --- | --- |
+| 喜欢/收藏/关注显式空态 | 当前页面形态的回归包括未知 viewer、他人弹窗、followers、隐藏/空白/通用错误等反例；不扩大到任意 main 下的视频列表。 |
+| session viewer 与设置页恢复 | canonical app-context user 需额外正向登录证据，显式 logout 覆盖 DOM；设置页无 nav-profile 时仍可识别 session viewer。 |
+| 分阶段 hydration | 登录与本人标题最多等待 20 秒，关注弹窗最多 20 秒；scope 基础预算 90 秒，总绝对上限 360 秒与 idle 120 秒不变。 |
+| 内容脚本投递 | 文档 complete/12 秒兜底之后，如果 receiver 尚未注册，以同一 scope 最多重试 20 秒；scope/任务切换或清理后停止，重试不延长任务 deadline，不重放站内写操作。 |
+
+公开 API：`readTiktokUniversalData` 新增显式登出字段，`resolveTiktokScopeRoot` 可传预期 viewer；`TIKTOK_SCOPE_EXECUTE` 和 task-result wire 不变。Chrome/Firefox 构建只能证明可打包，不能替代已安装 Chrome 的账号链路验收；实时结果见[台账](../platform-source-acceptance.tiktok.md)。
+
+### TikTok 慢加载和列表交接修复（2026-10-12）
+
+| 已实现行为 | 验证边界 |
+| --- | --- |
+| 列表内容晚于标签挂载 | 喜欢/收藏/历史 scope root 最多等待 60 秒，关注仍 20 秒；没有已证明的容器仍失败，不扩大到整页采集。dispatcher 的 idle/absolute deadline 仍优先。 |
+| scope 结果与下一 scope 交接 | 结果持久化后、等待后台 ACK 前释放采集锁；旧回调清理只能释放自己的锁和存储记录。同一文档在上一结果 ACK 前收到下一列表任务不再被忽略。 |
+| 原生收藏登录 hydration | 复用 TikTok 正向登录证据，明确登录墙或显式 logout 可提前终止；尚未挂载登录控件时继续等待，匿名上传按钮不能证明登录。 |
+
+公共 API：`waitForNativeSaveReadiness(ready, sleep, timeoutMs=10_000)` 新增可选等待预算（夹紧到 250–30,000ms，轮数和墙钟双重有界）；其他来源默认不变，TikTok save/verify 使用 20 秒。`TiktokNativeSaveEnvironment.isLoginRequired?()` 区分明确未登录和正在加载；wire、权限与配置均不变。真实验收状态见[台账](../platform-source-acceptance.tiktok.md)。
+
+### TikTok 原生收藏视口与持久化确认（2026-10-12）
+
+| 已实现行为 | 验证边界 |
+| --- | --- |
+| 精确视频的可见按钮 | 排除视口外、零尺寸和被裁切的控件，避免下一条预加载视频导致候选歧义；优先点击唯一可见的内层 button，多个内层按钮拒绝执行。 |
+| 当前桌面书签状态 | `favorite-icon` 内唯一 `SpanBookmarkWrapper` SVG 的已观察金色 `rgb(250, 206, 21)` 可作为即时选中态；继续支持 aria 和明确“取消收藏”文案，不把任意黄色图标当作收藏。 |
+| 刷新后持久化 | TikTok 的 `synced` / `already_synced` 即时结果也降为待确认，沿用一次刷新、新文档与 `verification_only` 路径；只有新文档的 `already_synced` 才能成功。无法刷新/未见新文档/再次未确认均失败，绝不再点一次。其他来源语义不变。 |
+
+公开函数和 wire 字段不变；`createTiktokBrowserEnvironment` 的实现与 `runNativeSaveTask` 的 TikTok 成功条件收紧，无新增权限、依赖、配置或架构连线。真实授权测试观察到请求成功和临时金色图标，但刷新后 25 秒仍未收藏，不能据此宣称原生写入通过；见[验收台账](../platform-source-acceptance.tiktok.md)。
+
+### TikTok scope 接收确认（2026-10-12）
+
+四列表真实复查仍出现喜欢已完成、下一 scope idle 超时，暴露原先把 `tabs.sendMessage` resolve 等同于执行接收的缺口。`TIKTOK_SCOPE_EXECUTE` 现在回复 `{accepted, task_id, scope}`：content 先持久化记录和 session 恢复指针，再允许肯定 ACK；重复同任务/同 scope 仅在可恢复后 ACK，忙于其它 scope 或存储失败拒绝接收。`executeTiktokScopeOnce(data, onAccepted?)` 新增可选回调。
+
+后台每次接收 ACK 最多等待 1 秒，缺失/错误 scope/否定/断开的 ACK 都沿原 20 秒投递预算重试同一只读 scope；正向 ACK 必须与任务和 scope 同时匹配。重试不扩展 idle/absolute deadline，不重放 native save。该改动补齐现有 dispatcher↔content 通道的接收边界，后端 wire、浏览器权限与配置不变；真实连续任务结果见[台账](../platform-source-acceptance.tiktok.md)。
+
+
+### TikTok 收藏请求完成观察（2026-10-13）
+
+| 已实现行为 | 验证边界 |
+| --- | --- |
+| 先观察再点击 | `TiktokNativeSaveEnvironment.watchFavoriteRequest(contentId)` 返回 `TiktokFavoriteRequestWatch`（`isComplete()` / `dispose()`）或 null；浏览器不支持观察时不执行写入。 |
+| 乐观 UI 不提前刷新 | 原生按钮已变金色仍须等待网页自身请求完成；只匹配同源 `/api/item/collect/`、`action=1`、精确 `itemId`、本次观察后的 fetch/XHR Resource Timing。不读取 Cookie 或响应体，不构造请求。 |
+| 完成与保存分开确认 | 观察请求完成不是证明服务端保存；runner 仍必须刷新并从新文档只读确认。未完成最多等待原有 100 轮/100ms 确认预算，未确认不报成功；所有退出路径释放观察器。 |
+
+只增加 content 内部环境接口，不改变后台 wire、权限、配置或跨模块架构。回归覆盖请求未完成时不刷新、旧请求/其他视频/取消收藏/异源请求不计入，以及观察器清理。实机人工点击等待响应后仍不保留收藏，详见 [TikTok 验收](../platform-source-acceptance.tiktok.md)。

@@ -2695,6 +2695,7 @@ class TestBackendAPI:
         import openbiliclaw.soul.engine as soul_engine_module
         import openbiliclaw.sources.bili_tasks as bili_tasks_module
         import openbiliclaw.sources.dy_tasks as dy_tasks_module
+        import openbiliclaw.sources.tiktok_tasks as tiktok_tasks_module
         import openbiliclaw.sources.x_tasks as x_tasks_module
         import openbiliclaw.sources.xhs_tasks as xhs_tasks_module
         import openbiliclaw.sources.yt_tasks as yt_tasks_module
@@ -2850,6 +2851,10 @@ class TestBackendAPI:
             def __init__(self, database: object) -> None:
                 self.database = database
 
+        class FakeTiktokTaskQueue:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
         class FakeZhihuTaskQueue:
             def __init__(self, database: object) -> None:
                 self.database = database
@@ -2962,6 +2967,7 @@ class TestBackendAPI:
         monkeypatch.setattr(account_sync_module, "AccountSyncService", FakeAccountSyncService)
         monkeypatch.setattr(bili_tasks_module, "BiliTaskQueue", FakeBiliTaskQueue)
         monkeypatch.setattr(dy_tasks_module, "DyTaskQueue", FakeDyTaskQueue)
+        monkeypatch.setattr(tiktok_tasks_module, "TiktokTaskQueue", FakeTiktokTaskQueue)
         monkeypatch.setattr(x_tasks_module, "XCreatorStore", FakeXCreatorStore)
         monkeypatch.setattr(xhs_tasks_module, "XhsTaskQueue", FakeXhsTaskQueue)
         monkeypatch.setattr(xhs_tasks_module, "XhsCreatorStore", FakeXhsCreatorStore)
@@ -3005,6 +3011,7 @@ class TestBackendAPI:
             "reddit": False,
             "linuxdo": False,
             "v2ex": False,
+            "tiktok": False,
         }
         assert captured["runtime_controller_kwargs"]["bilibili_producer"] is not None
         assert (
@@ -6939,6 +6946,79 @@ class TestBackendAPI:
                 "reason": "missing_cookie",
                 "source": "runtime-stream",
             }
+
+    def test_runtime_stream_requests_tiktok_cookie_sync_for_background_client(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, save_config
+        from openbiliclaw.runtime.events import RuntimeEventHub
+
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.delenv("OPENBILICLAW_TIKTOK_COOKIE", raising=False)
+        cfg = Config()
+        cfg.bilibili.cookie = "SESSDATA=bili; bili_jct=jct; DedeUserID=1"
+        cfg.sources.tiktok.enabled = True
+        save_config(cfg, tmp_path / "config.toml")
+
+        hub = RuntimeEventHub()
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            runtime_event_hub=hub,
+        )
+        client = TestClient(app)
+
+        with client.websocket_connect("/api/runtime-stream?client=background") as websocket:
+            assert websocket.receive_json() == {
+                "type": "xhs_login_state_sync_requested",
+                "reason": "runtime_connected",
+                "source": "runtime-stream",
+            }
+            assert websocket.receive_json() == {
+                "type": "zhihu_login_state_sync_requested",
+                "reason": "runtime_connected",
+                "source": "runtime-stream",
+            }
+            assert websocket.receive_json() == {
+                "type": "tiktok_cookie_sync_requested",
+                "reason": "missing_cookie",
+                "source": "runtime-stream",
+            }
+
+    def test_runtime_stream_skips_tiktok_sync_request_when_cookie_present(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """Guest mode is legitimate: a configured cookie means no request."""
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, save_config
+        from openbiliclaw.runtime.events import RuntimeEventHub
+        from openbiliclaw.sources.tiktok_auth import TiktokCookieManager
+
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.delenv("OPENBILICLAW_TIKTOK_COOKIE", raising=False)
+        cfg = Config()
+        cfg.bilibili.cookie = "SESSDATA=bili; bili_jct=jct; DedeUserID=1"
+        cfg.sources.tiktok.enabled = True
+        save_config(cfg, tmp_path / "config.toml")
+        TiktokCookieManager(cfg.data_path).set_cookie("sessionid=tt", source="test")
+
+        hub = RuntimeEventHub()
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=object(),
+            runtime_event_hub=hub,
+        )
+        client = TestClient(app)
+
+        with client.websocket_connect("/api/runtime-stream?client=background") as websocket:
+            # Only the two login-state pings; no tiktok cookie request.
+            assert websocket.receive_json()["type"] == "xhs_login_state_sync_requested"
+            assert websocket.receive_json()["type"] == "zhihu_login_state_sync_requested"
 
     def test_runtime_stream_requests_reddit_cookie_sync_for_background_client(
         self, monkeypatch, tmp_path: Path
@@ -15751,6 +15831,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "xiaohongshu": 2,
             "douyin": 2,
             "youtube": 1,
+            "tiktok": 1,
             "twitter": 3,
             "zhihu": 1,
             "reddit": 1,
@@ -16417,6 +16498,7 @@ class TestEmbeddingAndCompatProviderE2E:
             "xiaohongshu": 2,
             "douyin": 2,
             "youtube": 1,
+            "tiktok": 1,
             "twitter": 1,
             "github": 1,
             "zhihu": 1,
@@ -16588,6 +16670,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "xiaohongshu": 100,
                 "douyin": 9,
                 "youtube": 400,
+                "tiktok": 0,
                 "twitter": 0,
                 "zhihu": 0,
                 "reddit": 225,
@@ -16604,6 +16687,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "xiaohongshu": True,
                 "douyin": True,
                 "youtube": True,
+                "tiktok": False,
                 "twitter": False,
                 "zhihu": False,
                 "reddit": False,
@@ -16747,6 +16831,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "xiaohongshu": 100,
                 "douyin": 9,
                 "youtube": 400,
+                "tiktok": 0,
                 "twitter": 0,
                 "zhihu": 0,
                 "reddit": 225,
@@ -16763,6 +16848,7 @@ class TestEmbeddingAndCompatProviderE2E:
                 "xiaohongshu": False,
                 "douyin": False,
                 "youtube": True,
+                "tiktok": False,
                 "twitter": False,
                 "zhihu": False,
                 "reddit": True,
@@ -17638,6 +17724,25 @@ class TestGuidedInitEndpoints:
         # Rejected before reserving — no run row created at all.
         assert db.get_latest_init_run() is None
 
+    def test_init_accepts_tiktok_as_only_profile_signal_source(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """TikTok joined guided init with its account bootstrap queue
+        (tt_like/tt_collect/tt_history/tt_follow), so a tiktok-only selection
+        is a legal run and must reach the shared pipeline."""
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["tiktok"])
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+        captured = self._capture_run_guided_init(monkeypatch)
+        with TestClient(app) as client:
+            resp = client.post("/api/init", json={"sources": ["tiktok"]})
+            assert resp.status_code == 202
+            self._drive_until(client, captured, key="include_tiktok")
+        assert captured["include_bili"] is False
+        assert captured["include_tiktok"] is True
+        assert db.get_latest_init_run() is not None
+
     def test_init_accepts_reddit_as_only_profile_signal_source(
         self, tmp_path: Path, monkeypatch
     ) -> None:
@@ -17698,6 +17803,51 @@ class TestGuidedInitEndpoints:
             "readiness": "login_required",
         }
         assert db.get_latest_init_run() is None
+
+    def test_init_rejects_tiktok_only_when_profile_capability_is_signed_out(
+        self, tmp_path: Path
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(
+            bili="ok",
+            chat=True,
+            platforms=["tiktok"],
+            capability_readiness={("tiktok", "profile"): "login_required"},
+        )
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+
+        with TestClient(app) as client:
+            response = client.post("/api/init", json={"sources": ["tiktok"]})
+
+        assert response.status_code == 409
+        assert response.json()["error"] == "no_profile_signal_sources"
+        assert response.json()["capability"] == "profile"
+        assert response.json()["readiness"] == "login_required"
+        assert db.get_latest_init_run() is None
+
+    def test_init_drops_unready_tiktok_from_mixed_selection_with_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(
+            bili="ok",
+            chat=True,
+            platforms=["bilibili", "tiktok"],
+            capability_readiness={("tiktok", "profile"): "unverified"},
+        )
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+        captured = self._capture_run_guided_init(monkeypatch)
+        with TestClient(app) as client:
+            response = client.post("/api/init", json={"sources": ["bilibili", "tiktok"]})
+            assert response.status_code == 202
+            assert any("TikTok 个人信号未就绪" in w for w in response.json()["warnings"])
+            self._drive_until(client, captured, key="include_tiktok")
+
+        assert captured["include_bili"] is True
+        assert captured["include_tiktok"] is False
+        assert db.get_latest_init_run() is not None
 
     def test_init_records_douyin_degraded_as_partial_success(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

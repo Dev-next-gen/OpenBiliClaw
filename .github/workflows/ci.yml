@@ -44,6 +44,11 @@ jobs:
           go-version: "1.26.6"
           cache-dependency-path: cmd/openbiliclaw-tailnet/go.sum
 
+      - name: Set up Node.js for backend-extension protocol tests
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
       - name: Test embedded Tailnet helper
         working-directory: cmd/openbiliclaw-tailnet
         run: |

@@ -63,7 +63,7 @@
 
   /** Platform slugs the contract covers, in settings-page display order. */
   const SOURCE_KEYS = Object.freeze([
-    "bilibili", "xiaohongshu", "douyin", "weibo", "youtube", "twitter", "github", "zhihu", "reddit",
+    "bilibili", "xiaohongshu", "douyin", "weibo", "youtube", "tiktok", "twitter", "github", "zhihu", "reddit",
     "bangumi", "linuxdo", "v2ex", "instagram",
   ]);
 
@@ -73,6 +73,9 @@
     douyin: Object.freeze({ guidedInit: true }),
     weibo: Object.freeze({ guidedInit: true }),
     youtube: Object.freeze({ guidedInit: true }),
+    // TikTok account bootstrap (likes/favorites/history/follows) runs through
+    // the extension tiktok_tasks queue, so it participates in guided init.
+    tiktok: Object.freeze({ guidedInit: true }),
     twitter: Object.freeze({ guidedInit: true }),
     github: Object.freeze({ guidedInit: true }),
     zhihu: Object.freeze({ guidedInit: true }),
@@ -99,6 +102,7 @@
     douyin: "抖音",
     weibo: "微博",
     youtube: "YouTube",
+    tiktok: "TikTok",
     twitter: "X",
     github: "GitHub",
     zhihu: "知乎",

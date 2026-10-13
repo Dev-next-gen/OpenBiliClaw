@@ -189,6 +189,7 @@ from openbiliclaw.api.models import (
     SourceVerifyResponse,
     StorageConfigOut,
     TailnetConfigOut,
+    TiktokSourceConfigOut,
     TwitterSourceConfigOut,
     UpdateApplyIn,
     UpdateCheckIn,
@@ -704,6 +705,7 @@ _SOURCE_SHARE_ORDER = (
     "xiaohongshu",
     "douyin",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",
@@ -717,11 +719,17 @@ _SOURCE_SHARE_ORDER = (
 # Unknown/unregistered platform slugs are preserved in the database for future
 # expansion, but they must not silently disappear from source-share counts.
 _SOURCE_COUNT_ORDER = _SOURCE_SHARE_ORDER + ("unknown",)
+# Guided-init legal sources: every registered source family. TikTok joined
+# when its account bootstrap queue (tiktok_tasks) landed — guided init now
+# collects real signals (tt_like/tt_collect/tt_history/tt_follow) through the
+# extension task handler, so enabling it no longer flips
+# ``sources.tiktok.enabled`` without collecting anything.
 _INIT_SOURCE_ORDER = (
     "bilibili",
     "xiaohongshu",
     "douyin",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",
@@ -769,6 +777,7 @@ _NATIVE_SAVE_E2E_CONTENT_TYPES: dict[str, frozenset[str]] = {
     "twitter": frozenset({"tweet", "status"}),
     "zhihu": frozenset({"question", "answer", "article"}),
     "reddit": frozenset({"post", "comment"}),
+    "tiktok": frozenset({"video"}),
 }
 
 
@@ -845,6 +854,11 @@ def _native_save_e2e_content_id_from_url(
         if not host_is_or_subdomain("douyin.com"):
             return ""
         match = re.fullmatch(r"/video/([A-Za-z0-9_-]+)/?", parsed.path)
+        return match.group(1) if match else ""
+    if platform == "tiktok":
+        if not host_is_or_subdomain("tiktok.com"):
+            return ""
+        match = re.fullmatch(r"/@[\w.-]+/video/([0-9]+)/?", parsed.path)
         return match.group(1) if match else ""
     if platform == "twitter":
         if not host_is_or_subdomain("x.com", "twitter.com"):
@@ -6178,6 +6192,7 @@ def create_app(
                 include_xhs="xiaohongshu" in effective,
                 include_dy="douyin" in effective,
                 include_yt="youtube" in effective,
+                include_tiktok="tiktok" in effective,
                 include_x="twitter" in effective,
                 include_zhihu="zhihu" in effective,
                 include_reddit="reddit" in effective,
@@ -6208,6 +6223,8 @@ def create_app(
             discovery_partial = bool(result.discovery_error)
             dy_status = str(getattr(result, "dy_status", "skipped") or "skipped")
             dy_degraded = dy_status == "degraded"
+            tiktok_status = str(getattr(result, "tiktok_status", "skipped") or "skipped")
+            tiktok_degraded = tiktok_status == "degraded"
             linuxdo_status = str(getattr(result, "linuxdo_status", "skipped") or "skipped")
             linuxdo_degraded = linuxdo_status == "degraded"
             weibo_status = str(getattr(result, "weibo_status", "skipped") or "skipped")
@@ -6228,6 +6245,7 @@ def create_app(
             partial_success = (
                 discovery_partial
                 or dy_degraded
+                or tiktok_degraded
                 or linuxdo_degraded
                 or v2ex_partial
                 or github_partial
@@ -6236,6 +6254,16 @@ def create_app(
             )
             reason = getattr(result, "discovery_reason", None)
             detail = str(getattr(result, "discovery_detail", "") or "").strip()
+            if tiktok_degraded:
+                tiktok_event_count = len(getattr(result, "tiktok_events", []) or [])
+                tiktok_detail = (
+                    "TikTok 采集状态 tiktok_status=degraded："
+                    f"已保留并用于画像建模 {tiktok_event_count} 条已采事件，"
+                    "但至少一个范围未能证明分页完整。"
+                )
+                detail = " ".join(part for part in (detail, tiktok_detail) if part)
+                if not discovery_partial:
+                    reason = "tiktok_degraded"
             if dy_degraded:
                 dy_event_count = len(getattr(result, "dy_events", []) or [])
                 dy_detail = (
@@ -6692,6 +6720,31 @@ def create_app(
                 effective_sources.discard("instagram")
                 warnings.append(
                     "Instagram 个人信号未就绪：本次初始化跳过点赞、收藏和关注；公开发现保持启用。"
+                )
+        tiktok_capability_readiness = capability_readiness
+        if "tiktok" in effective_sources and callable(tiktok_capability_readiness):
+            tiktok_profile_readiness = str(
+                tiktok_capability_readiness("tiktok", "profile") or "unverified"
+            )
+            if tiktok_profile_readiness != "ready":
+                if effective_sources == {"tiktok"}:
+                    return JSONResponse(
+                        {
+                            "error": "no_profile_signal_sources",
+                            "detail": (
+                                "TikTok 公开发现可用访客身份，但初始化点赞、收藏、观看历史"
+                                "和关注记录需要当前浏览器已登录 tiktok.com 并连接扩展"
+                                "（登录证据由扩展同步并经会话心跳确认）。"
+                            ),
+                            "capability": "profile",
+                            "readiness": tiktok_profile_readiness,
+                        },
+                        status_code=409,
+                    )
+                effective_sources.discard("tiktok")
+                warnings.append(
+                    "TikTok 个人信号未就绪：本次初始化跳过点赞、收藏、观看历史和关注；"
+                    "公开发现保持启用。"
                 )
         configured_bangumi_username = str(
             getattr(
@@ -8781,6 +8834,29 @@ def create_app(
                             await websocket.send_json(
                                 {
                                     "type": "douyin_cookie_sync_requested",
+                                    "reason": "missing_cookie",
+                                    "source": "runtime-stream",
+                                }
+                            )
+                with suppress(Exception):
+                    # TikTok without a cookie is a legitimate guest-mode
+                    # state, so this is a quiet pull, not a missing-credential
+                    # complaint: if the browser is logged into tiktok.com the
+                    # extension answers with the jar, otherwise it no-ops.
+                    tt_cfg = getattr(runtime_config.sources, "tiktok", None)
+                    if tt_cfg is not None and bool(getattr(tt_cfg, "enabled", False)):
+                        from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
+
+                        tt_cookie = resolve_tiktok_cookie(
+                            data_dir=runtime_config.data_path,
+                            cookie_env=str(
+                                getattr(tt_cfg, "cookie_env", "OPENBILICLAW_TIKTOK_COOKIE")
+                            ),
+                        )
+                        if not str(tt_cookie or "").strip():
+                            await websocket.send_json(
+                                {
+                                    "type": "tiktok_cookie_sync_requested",
                                     "reason": "missing_cookie",
                                     "source": "runtime-stream",
                                 }
@@ -17693,17 +17769,21 @@ def create_app(
                 XSourceHealthStore(ctx.database).clear_relogin_block()
 
         runtime_refreshed = False
-        if slug == "bilibili" and written.runtime_dirty:
+        if slug in {"bilibili", "tiktok"} and written.runtime_dirty:
             # Atomic by contract: a partial ``rebuild_from_config`` leaves the
             # old runtime intact, so a failure here costs a stale client, never
-            # a broken one.
+            # a broken one. TikTok captures its cookie and search availability
+            # at construction, so a late extension sync must replace it too.
             with suppress(Exception):
-                await _rebuild_runtime_with_lane_handoff(load_config())
+                await _rebuild_runtime_with_lane_handoff(
+                    load_config(), run_post_reload_llm_work=slug != "tiktok"
+                )
                 runtime_refreshed = True
 
         event_type = {
             "bilibili": "bilibili_cookie_synced",
             "douyin": "douyin_cookie_synced",
+            "tiktok": "tiktok_cookie_synced",
             "twitter": "x_cookie_synced",
             "reddit": "reddit_cookie_synced",
         }.get(slug, "")
@@ -17835,6 +17915,7 @@ def create_app(
         from openbiliclaw.config import load_config
         from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
         from openbiliclaw.sources.reddit_tasks import rdt_credential_cookie_names
+        from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
 
         cfg = _pin_active_runtime_config(load_config())
         srcs = cfg.sources
@@ -17846,6 +17927,10 @@ def create_app(
         dy_cookie = resolve_douyin_cookie(
             data_dir=cfg.data_path,
             cookie_env=getattr(srcs.douyin, "cookie_env", "OPENBILICLAW_DOUYIN_COOKIE"),
+        )
+        tt_cookie = resolve_tiktok_cookie(
+            data_dir=cfg.data_path,
+            cookie_env=getattr(srcs.tiktok, "cookie_env", "OPENBILICLAW_TIKTOK_COOKIE"),
         )
         tw_cookie = resolve_x_cookie(
             data_dir=cfg.data_path,
@@ -17969,6 +18054,13 @@ def create_app(
                 "Cookie",
                 "",
                 "YouTube 当前按公开源接入，后端不保存 Cookie。",
+            ),
+            tiktok=item(
+                "tiktok",
+                "Cookie",
+                tt_cookie,
+                "TikTok 默认以访客身份读公开数据无需登录；可选登录 Cookie 用于解锁关键词搜索"
+                "与更高限额（env 优先，兜底 data/tiktok_cookie.json）。",
             ),
             twitter=item("twitter", "Cookie", tw_cookie, "X 当前 resolved Cookie。"),
             zhihu=item(
@@ -18175,6 +18267,191 @@ def create_app(
 
         return {"ok": True}
 
+    # ── TikTok task queue endpoints (extension dispatcher) ─────────
+    # Mirrors the Douyin block above by design: same two-phase staged
+    # completion contract, separate table (tiktok_tasks) and queue class.
+    # Scopes differ: TikTok adds tt_history (watch history → view), the
+    # first history-type bootstrap scope in this tree.
+
+    from openbiliclaw.sources.tiktok_tasks import (
+        TiktokTaskQueue,
+        tiktok_bootstrap_video_key,
+        tiktok_bootstrap_videos_to_events,
+    )
+
+    _tiktok_task_queue: TiktokTaskQueue | None = None
+    if hasattr(ctx.database, "conn"):
+        _tiktok_task_queue = TiktokTaskQueue(ctx.database)
+
+    @app.get("/api/sources/tiktok/next-task")
+    def tiktok_next_task(response: Any = None) -> Any:
+        """Return the oldest pending tiktok task, or 204 if none.
+
+        Durable extension native-save jobs are claimed first (same
+        priority as dy/yt), then the tiktok_tasks bootstrap queue.
+        """
+        from starlette.responses import Response
+
+        native_task = _claim_extension_native_task("tiktok")
+        if native_task is not None:
+            return native_task
+
+        _cancel_disabled_source_incremental_tasks("tiktok")
+
+        if _tiktok_task_queue is None:
+            return Response(status_code=204)
+        task = _tiktok_task_queue.next_pending(only_ids=_init_owned_ids_filter())
+        if task is None:
+            return Response(status_code=204)
+
+        import json as _json
+
+        payload = _json.loads(task["payload_json"]) if task.get("payload_json") else {}
+        return {
+            "id": task["id"],
+            "type": task["type"],
+            **payload,
+        }
+
+    @app.post("/api/sources/tiktok/task-result")
+    async def tiktok_task_result(payload: dict[str, Any]) -> dict[str, Any]:
+        """Accept a TikTok task result from the extension dispatcher.
+
+        ``ok`` and ``degraded`` are terminal, while ``partial`` keeps the
+        task pending and ``failed`` marks it failed. ``degraded`` means the
+        extension preserved valid items but could not prove the bootstrap
+        was complete. The result schema uses ``videos`` and propagation
+        goes through ``tiktok_bootstrap_videos_to_events``.
+        """
+        task_id = str(payload.get("task_id", "") or "").strip()
+        if not task_id:
+            raise HTTPException(status_code=422, detail="task_id is required")
+        if _is_extension_native_job(task_id):
+            if not _is_extension_native_job(task_id, "tiktok"):
+                raise HTTPException(status_code=409, detail="task_result_conflict")
+            return _submit_extension_native_result("tiktok", payload)
+
+        status = str(payload.get("status", "") or "").strip()
+        raw_videos = payload.get("videos", [])
+        if not isinstance(raw_videos, list):
+            raise HTTPException(status_code=422, detail="videos must be a list")
+        videos = [v for v in raw_videos if isinstance(v, dict)]
+        scope_counts = payload.get("scope_counts")
+        if not isinstance(scope_counts, dict):
+            scope_counts = None
+        debug = payload.get("debug")
+        if not isinstance(debug, dict):
+            debug = None
+
+        legacy_queue = _tiktok_task_queue
+        if legacy_queue is None:
+            raise HTTPException(status_code=409, detail="task_result_conflict")
+        task = _require_legacy_task(legacy_queue, task_id)
+        task_type = str(task.get("type", "")).strip() if task else ""
+        if str(task.get("status", "")).strip() in {"completed", "failed"}:
+            # Extension callbacks may race or be retried out of order.  Keep a
+            # terminal result immutable and acknowledge the retry so the
+            # dispatcher does not enter a resend loop.
+            return {"ok": True, "ignored": True}
+
+        from openbiliclaw.sources.task_result_protocol import (
+            parse_task_result,
+            staged_terminal_status,
+        )
+
+        canonical_result = parse_task_result(task.get("result_json"))
+        staged_status = staged_terminal_status(canonical_result)
+        task_payload = parse_task_result(task.get("payload_json"))
+        profile_update = (
+            task_payload.get("profile_update") is True
+            or task_payload.get("incremental") is True
+            or _init_owns_task(task_id)
+        )
+        if not staged_status and status in {"partial", "ok", "empty", "degraded"}:
+            try:
+                legacy_queue.bind_account(
+                    task_id,
+                    viewer_handle=payload.get("viewer_handle"),
+                    viewer_sec_uid=payload.get("viewer_sec_uid"),
+                    profile_update=profile_update,
+                )
+            except ValueError as exc:
+                legacy_queue.fail(task_id, error=str(exc))
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        if (
+            staged_status
+            or status in {"partial", "ok", "degraded"}
+            or (status == "empty" and task_type == "bootstrap_profile")
+        ):
+            is_final = (
+                bool(staged_status)
+                or status in {"ok", "degraded"}
+                or (status == "empty" and task_type == "bootstrap_profile")
+            )
+            if staged_status:
+                # Repair exclusively from the first durable final payload.
+                canonical_result = parse_task_result(task.get("result_json"))
+            elif is_final:
+                canonical_result = legacy_queue.stage_final_result(
+                    task_id,
+                    terminal_status=status,
+                    videos=videos if videos else None,
+                    scope_counts=scope_counts,
+                    debug=debug,
+                )
+            else:
+                legacy_queue.merge_result(
+                    task_id,
+                    videos=videos if videos else None,
+                    scope_counts=scope_counts,
+                    debug=debug,
+                    complete=False,
+                )
+                canonical_task = legacy_queue.get(task_id) or {}
+                canonical_result = parse_task_result(canonical_task.get("result_json"))
+            canonical_videos = [
+                value for value in canonical_result.get("videos", []) if isinstance(value, dict)
+            ]
+            # gui-init D1: persist the result (above) for init's own collector;
+            # during init skip profile propagation for non-owned results, but
+            # propagate init-OWNED bootstrap results through the deduped path.
+            _init_busy = _init_active_now()
+            _skip_profile = _init_busy and not _init_owns_task(task_id)
+            if (
+                task_type == "bootstrap_profile"
+                and profile_update
+                and canonical_videos
+                and not _skip_profile
+            ):
+                fresh_videos, video_keys_by_index = _filter_new_source_bootstrap_items(
+                    "tiktok",
+                    canonical_videos,
+                    lambda video: (
+                        str(canonical_result.get("account_key", ""))
+                        + ":"
+                        + tiktok_bootstrap_video_key(video)
+                    ),
+                )
+                events_with_keys: list[tuple[dict[str, Any], str]] = []
+                for index, video in enumerate(fresh_videos):
+                    for event in tiktok_bootstrap_videos_to_events([video]):
+                        key = video_keys_by_index.get(index, "")
+                        events_with_keys.append((event, key))
+                accepted_keys = await _accept_source_profile_events(
+                    source="tiktok",
+                    task_id=task_id,
+                    events_with_keys=events_with_keys,
+                    generic_owner=not _init_busy,
+                )
+                _mark_source_bootstrap_keys("tiktok", accepted_keys)
+            if is_final:
+                legacy_queue.complete_staged_result(task_id)
+        else:
+            legacy_queue.fail(task_id, error=payload.get("error", ""), debug=debug)
+
+        return {"ok": True}
+
     # ── Wake-up kick endpoints ──────────────────────────────────────
     #
     # The extension's task dispatchers normally poll on a 60s
@@ -18199,6 +18476,12 @@ def create_app(
         """Broadcast `dy_task_available` over runtime-stream. See
         xhs_task_kick docstring for rationale."""
         return await _kick_source_task("dy")
+
+    @app.post("/api/sources/tiktok/kick")
+    async def tiktok_task_kick() -> dict[str, Any]:
+        """Broadcast `tiktok_task_available` over runtime-stream. See
+        xhs_task_kick docstring for rationale."""
+        return await _kick_source_task("tiktok")
 
     @app.get("/api/sources/x/next-task")
     def x_next_task(response: Any = None) -> Any:
@@ -20146,12 +20429,19 @@ def create_app(
             effective_llm_routes,
         )
         from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
+        from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
 
         dy_cookie = ""
         with suppress(Exception):
             dy_cookie = resolve_douyin_cookie(
                 data_dir=_active_runtime_data_path(),
                 cookie_env=cfg.sources.douyin.cookie_env,
+            )
+        tt_cookie = ""
+        with suppress(Exception):
+            tt_cookie = resolve_tiktok_cookie(
+                data_dir=_active_runtime_data_path(),
+                cookie_env=cfg.sources.tiktok.cookie_env,
             )
         tw_cookie = ""
         with suppress(Exception):
@@ -20375,6 +20665,24 @@ def create_app(
                     min_interval_minutes=cfg.sources.youtube.min_interval_minutes,
                     **_source_date_pref_out_kwargs(cfg.sources.youtube),
                 ),
+                tiktok=TiktokSourceConfigOut(
+                    enabled=cfg.sources.tiktok.enabled,
+                    incremental_enabled=cfg.sources.tiktok.incremental_enabled,
+                    mode=cfg.sources.tiktok.mode,
+                    cookie=_mask(tt_cookie),
+                    cookie_env=cfg.sources.tiktok.cookie_env,
+                    region=cfg.sources.tiktok.region,
+                    tz_name=cfg.sources.tiktok.tz_name,
+                    tags=list(cfg.sources.tiktok.tags),
+                    creators=list(cfg.sources.tiktok.creators),
+                    daily_feed_budget=cfg.sources.tiktok.daily_feed_budget,
+                    daily_search_budget=cfg.sources.tiktok.daily_search_budget,
+                    daily_tag_budget=cfg.sources.tiktok.daily_tag_budget,
+                    daily_user_budget=cfg.sources.tiktok.daily_user_budget,
+                    request_interval_seconds=cfg.sources.tiktok.request_interval_seconds,
+                    min_interval_minutes=cfg.sources.tiktok.min_interval_minutes,
+                    **_source_date_pref_out_kwargs(cfg.sources.tiktok),
+                ),
                 twitter=TwitterSourceConfigOut(
                     enabled=cfg.sources.twitter.enabled,
                     mode=cfg.sources.twitter.mode,
@@ -20538,6 +20846,7 @@ def create_app(
                 reddit_incremental_hours=getattr(cfg.scheduler, "reddit_incremental_hours", None),
                 linuxdo_incremental_hours=getattr(cfg.scheduler, "linuxdo_incremental_hours", None),
                 v2ex_incremental_hours=getattr(cfg.scheduler, "v2ex_incremental_hours", None),
+                tiktok_incremental_hours=getattr(cfg.scheduler, "tiktok_incremental_hours", None),
                 refresh_check_interval_seconds=cfg.scheduler.refresh_check_interval_seconds,
                 eval_min_batch_size=cfg.scheduler.eval_min_batch_size,
                 eval_max_wait_seconds=cfg.scheduler.eval_max_wait_seconds,
@@ -22438,6 +22747,79 @@ def create_app(
                         if key in yt_data:
                             setattr(cfg.sources.youtube, key, int(yt_data[key]))
 
+                tt_data = sources_data.get("tiktok")
+                if isinstance(tt_data, dict):
+                    if "enabled" in tt_data:
+                        cfg.sources.tiktok.enabled = _as_bool(tt_data["enabled"])
+                    if "incremental_enabled" in tt_data:
+                        cfg.sources.tiktok.incremental_enabled = _as_bool(
+                            tt_data["incremental_enabled"]
+                        )
+                    if "mode" in tt_data:
+                        # Reject invalid backends at save time instead of
+                        # silently clamping them at read time.
+                        from openbiliclaw.sources.tiktok_web import _TIKTOK_MODES
+
+                        new_mode = str(tt_data["mode"]).strip().lower()
+                        if new_mode not in _TIKTOK_MODES:
+                            raise ValueError(
+                                f"sources.tiktok.mode 必须是 {', '.join(_TIKTOK_MODES)} 之一"
+                            )
+                        cfg.sources.tiktok.mode = new_mode
+                    if "cookie_env" in tt_data:
+                        new_env = str(tt_data["cookie_env"]).strip()
+                        if new_env:
+                            cfg.sources.tiktok.cookie_env = new_env
+                    for str_key in ("region", "tz_name"):
+                        # Empty geo values would gate every request; ignore
+                        # them rather than persisting a broken identity.
+                        if str_key in tt_data:
+                            new_geo = str(tt_data[str_key]).strip()
+                            if new_geo:
+                                setattr(cfg.sources.tiktok, str_key, new_geo)
+                    if "cookie" in tt_data:
+                        # Manual paste — routed to data/tiktok_cookie.json like
+                        # the unified credential endpoint; never lands in
+                        # config.toml. Same write gate as everywhere else
+                        # (spec D4): the passport-beat probe must accept the
+                        # cookie before it is stored.
+                        from openbiliclaw.sources.tiktok_auth import (
+                            TiktokCookieManager,
+                            resolve_tiktok_cookie,
+                        )
+
+                        new_cookie = str(tt_data["cookie"]).strip()
+                        if new_cookie and not _is_masked_echo(new_cookie):
+                            current = ""
+                            with suppress(Exception):
+                                current = resolve_tiktok_cookie(
+                                    data_dir=active_data_path,
+                                    cookie_env=cfg.sources.tiktok.cookie_env,
+                                )
+                            if new_cookie != current:
+                                await _gate_credential("tiktok", new_cookie)
+                                TiktokCookieManager(active_data_path).set_cookie(
+                                    new_cookie, source="config-update"
+                                )
+                    for list_key in ("tags", "creators"):
+                        raw_list = tt_data.get(list_key)
+                        if isinstance(raw_list, list):
+                            setattr(
+                                cfg.sources.tiktok,
+                                list_key,
+                                tuple(str(item).strip() for item in raw_list if str(item).strip()),
+                            )
+                    for key in (
+                        "daily_feed_budget",
+                        "daily_search_budget",
+                        "daily_tag_budget",
+                        "daily_user_budget",
+                        "request_interval_seconds",
+                        "min_interval_minutes",
+                    ):
+                        if key in tt_data:
+                            setattr(cfg.sources.tiktok, key, int(tt_data[key]))
+
                 tw_data = sources_data.get("twitter")
                 if isinstance(tw_data, dict):
                     if "enabled" in tw_data:
@@ -23343,6 +23725,7 @@ def create_app(
                 "xiaohongshu": cfg.sources.xiaohongshu,
                 "douyin": cfg.sources.douyin,
                 "youtube": cfg.sources.youtube,
+                "tiktok": cfg.sources.tiktok,
                 "twitter": cfg.sources.twitter,
                 "zhihu": cfg.sources.zhihu,
                 "reddit": cfg.sources.reddit,
@@ -23421,6 +23804,7 @@ def create_app(
                 "reddit_incremental_hours",
                 "linuxdo_incremental_hours",
                 "v2ex_incremental_hours",
+                "tiktok_incremental_hours",
                 "refresh_check_interval_seconds",
                 "eval_min_batch_size",
                 "eval_max_wait_seconds",
@@ -23477,6 +23861,7 @@ def create_app(
                         "reddit_incremental_hours",
                         "linuxdo_incremental_hours",
                         "v2ex_incremental_hours",
+                        "tiktok_incremental_hours",
                     }:
                         try:
                             # Douyin account bootstrap can foreground a task tab.

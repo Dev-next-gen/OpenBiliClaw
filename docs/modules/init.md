@@ -6,7 +6,7 @@
 
 四阶段（与 CLI 完全一致）：
 
-1. **拉取数据** — 按本轮选择采集 B 站历史 / 收藏 / 关注，小红书、抖音、YouTube、知乎、Reddit、Linux.do、V2EX、微博扩展任务信号，X 服务端点赞 / 收藏，Bangumi 官方 API 收藏，以及 GitHub 官方 REST 的公开 starred repositories，再统一经 `build_event` → `memory.propagate_events` 批量事务入库。GitHub 每个公开 Star 只映射为 `favorite`，不从 forks / issues / watchers 合成其它行为；它没有扩展任务或后台账号增量，只在 init / 按需 fetch 重读。GitHub Star 分页若在至少一个完整页后超时，会保留此前事件并以 `partial_timeout` 结束；零完整页超时仍失败。GitHub 的身份、PAT 或采集失败按来源隔离：混合初始化继续使用其它有效来源并在 scope counts / 最终摘要保留稳定 GitHub reason；只有 GitHub 是唯一画像来源且没有有效事件时才硬失败。其它来源继续按各自 complete / empty / degraded 证据决定是否可建模和是否推进周期状态，任何 partial 都不冒充完整快照。
+1. **拉取数据** — 按本轮选择采集 B 站历史 / 收藏 / 关注，小红书、抖音、YouTube、知乎、Reddit、Linux.do、V2EX、微博、Instagram、TikTok 扩展任务信号，X 服务端点赞 / 收藏，Bangumi 官方 API 收藏，以及 GitHub 官方 REST 的公开 starred repositories，再统一经 `build_event` → `memory.propagate_events` 批量事务入库。GitHub 每个公开 Star 只映射为 `favorite`，不从 forks / issues / watchers 合成其它行为；它没有扩展任务或后台账号增量，只在 init / 按需 fetch 重读。GitHub Star 分页若在至少一个完整页后超时，会保留此前事件并以 `partial_timeout` 结束；零完整页超时仍失败。GitHub 的身份、PAT 或采集失败按来源隔离：混合初始化继续使用其它有效来源并在 scope counts / 最终摘要保留稳定 GitHub reason；只有 GitHub 是唯一画像来源且没有有效事件时才硬失败。其它来源继续按各自 complete / empty / degraded 证据决定是否可建模和是否推进周期状态，任何 partial 都不冒充完整快照。
 Linux.do bootstrap 的三个 scope 有部分失败时以 `degraded` 回传：已得到的书签/点赞/阅读事件仍进入本轮画像输入，但不种 `last_attempt_at`、不视为完整采集，也不参与 6 小时近期任务复用；全部 scope 失败为 `failed`，同样不复用。Linux.do 单任务默认有 32.5 分钟端到端总等待：pending 最多约 3 分钟等领取，进入 `in_progress` 后可按形状执行最多约 29 分钟，并留 30 秒结果余量。阶段 1 的基础总预算仍是 1800 秒；调用方使用默认值时，Linux.do 是唯一来源则至少给 32.5 分钟，Linux.do 与至少一个其它来源并选则给 30 + 32.5 = 62.5 分钟，避免串行的前序来源吃掉合法长任务窗口。显式传入 `collection_timeout_seconds` override 时原样生效、不扩容。
 
 2. **分析偏好** — `soul_engine.analyze_events(...)` 分片并发；每个初始化 chunk 除了结构化偏好，也会产出少量临时 `awareness_candidates` / `insight_candidates`，本地去重合并后只作为本次画像生成上下文。

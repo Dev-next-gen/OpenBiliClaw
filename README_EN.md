@@ -26,17 +26,17 @@ Source mirror in China: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo23
 >
 > 📱 Want a native app? The Flutter mobile client (Android / iOS / Web / desktop) lives in the separate repo [`OpenBiliClaw-mobile`](https://github.com/whiteguo233/OpenBiliClaw-mobile): recommendations, chat, profile, favorites / watch-later / 30-day history — all talking to the same local backend.
 
-> 🇨🇳 **Mainland China source**: [Gitee v0.3.227 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.227) is synced. Domestic installer mirrors for this version are pending; use [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.227) for current packages. [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) retains older versions; check the version in each filename.
+> 🇨🇳 **Mainland China source**: [Gitee v0.3.228 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.228) is synced. Domestic installer mirrors for this version are pending; use [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.228) for current packages. [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) retains older versions; check the version in each filename.
 
 ## OpenBiliClaw in 10 Seconds
 
 > Instagram is included in v0.3.227 as **experimental and disabled by default**. Real-account initialization → configured models → recommendations, plus Web, extension, and iOS simulator consumption have been exercised. Complete Likes termination, two accounts, signed-in Firefox, and physical phones remain unverified; cross-device saved state needs a refresh. See [setup and network requirements](docs/modules/instagram.md) and the [acceptance ledger](docs/platform-source-acceptance.instagram.md).
 
-A local-first AI discovery agent that learns your taste across Bilibili, Xiaohongshu (RedNote), Douyin, YouTube, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, experimental Instagram, and the open web — without handing your profile to another platform.
+A local-first AI discovery agent that learns your taste across Bilibili, Xiaohongshu (RedNote), Douyin, YouTube, TikTok, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, experimental Instagram, and the open web — without handing your profile to another platform.
 
 | Cross-platform | Local-first | Trainable |
 |---|---|---|
-| Bilibili / Xiaohongshu / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / GitHub / Instagram (experimental) / Web | Data stays in your local SQLite by default | Likes, dislikes, and chat feedback shape future recommendations |
+| Bilibili / Xiaohongshu / Douyin / YouTube / TikTok / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / GitHub / Instagram (experimental) / Web | Data stays in your local SQLite by default | Likes, dislikes, and chat feedback shape future recommendations |
 
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg"><b>Install the browser extension</b></a>
@@ -57,7 +57,7 @@ A local-first AI discovery agent that learns your taste across Bilibili, Xiaohon
 Four steps for most users. Firefox, Docker, scripted, and manual setup paths all live in [Setup Details](#setup-details).
 
 1. **Install the extension** — one-click from the [Chrome Web Store](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg) (auto-updates), or download the zip from [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for the newest build (the store listing can lag a few days behind).
-2. **Install the backend** — grab the desktop installer from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) (macOS `.dmg` / Windows `.exe`, works out of the box, lives in the menu bar / tray). Each platform ships two variants: the **lean** installer (default; downloads the bge-m3 embedding model on first launch) and the **`-with-embedding`** installer (bge-m3 baked in, ~1.1GB, offline-ready) — pick with-embedding for a poor / offline network, lean otherwise. **[Gitee v0.3.227 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.227) is synced; current domestic installer mirrors are pending, and 123 Cloud currently retains older versions.** Or, to customize or edit the source, paste this into Claude Code / Codex CLI / Cursor or another AI coding agent:
+2. **Install the backend** — grab the desktop installer from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) (macOS `.dmg` / Windows `.exe`, works out of the box, lives in the menu bar / tray). Each platform ships two variants: the **lean** installer (default; downloads the bge-m3 embedding model on first launch) and the **`-with-embedding`** installer (bge-m3 baked in, ~1.1GB, offline-ready) — pick with-embedding for a poor / offline network, lean otherwise. **[Gitee v0.3.228 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.228) is synced; current domestic installer mirrors are pending, and 123 Cloud currently retains older versions.** Or, to customize or edit the source, paste this into Claude Code / Codex CLI / Cursor or another AI coding agent:
 
    ```text
    Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).
@@ -89,7 +89,7 @@ query inspiration → configured provider chain → optional Parallel Search MCP
 
 ## Why OpenBiliClaw?
 
-> The name comes from Bilibili (`Bili` = Bilibili, `Claw` = "the claw that grabs content for you") — the project started as a Bilibili-only tool. Since v0.3.0 it has evolved into a general cross-platform Agent covering Bilibili / Xiaohongshu / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / GitHub / Instagram (experimental) and the open web, with more platforms on the roadmap.
+> The name comes from Bilibili (`Bili` = Bilibili, `Claw` = "the claw that grabs content for you") — the project started as a Bilibili-only tool. Since v0.3.0 it has evolved into a general cross-platform Agent covering Bilibili / Xiaohongshu / Douyin / YouTube / TikTok / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / GitHub / Instagram (experimental) and the open web, with more platforms on the roadmap.
 
 Recommendation systems are essentially a **middleman** — the platform sits between millions of videos and millions of users, matching and distributing content at scale. Modern systems are far more sophisticated than "just optimizing CTR": they jointly weigh click-through rate, completion rate, like/coin probability, dwell time, user retention, creator ecosystem health, ad revenue, and a dozen other objectives, compressing them into a single weighted ranking score. Sounds scientific, but here's the catch: **the weights are set by the platform, and the optimization targets ultimately serve the platform** — user satisfaction is valued as a means to retention and monetization, not as an end in itself. You think you're choosing content, but really the middleman decides what you get to see. The result: recommendations look more and more like what you've already watched, and the occasional surprise is pure luck.
 
@@ -112,7 +112,7 @@ Core behavior, recommendation, and dialogue data lives in SQLite on your disk; c
 > | | Bilibili Official | Keyword Filter Plugins | OpenBiliClaw |
 > |---|---|---|---|
 > | Recommendation logic | Collaborative filtering | Tag matching | Psychological profiling + 5-layer memory |
-> | Content sources | Single platform | Single platform | Cross-platform: Bilibili · Xiaohongshu · Douyin · YouTube · X · Zhihu · Reddit · Linux.do · Bangumi · V2EX · Weibo · GitHub · Instagram (experimental) · more |
+> | Content sources | Single platform | Single platform | Cross-platform: Bilibili · Xiaohongshu · Douyin · YouTube · TikTok · X · Zhihu · Reddit · Linux.do · Bangumi · V2EX · Weibo · GitHub · Instagram (experimental) · more |
 > | Filter bubble | Gets narrower | Doesn't address it | Speculative interests actively break it |
 > | Data ownership | Platform-owned | Usually cloud | 100% local |
 > | Explains why | "Guess you'll like" | None | Friend-like explanations |
@@ -225,11 +225,11 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-📌 Latest: **v0.3.227 (2026-10-06)**
+📌 Latest: **v0.3.228 (2026-10-13)**
 
-- **Simpler Mac installation**: desktop apps use Developer ID signing and Apple notarization; drag into Applications to launch.
-- **Experimental Instagram source**: disabled by default, with bounded read-only discovery and account imports; documented acceptance limits remain.
-- **Clearer initialization failures**: discovery failures and recovery status are shown accurately instead of appearing as ongoing replenishment.
+- **Much cheaper profile understanding**: profile-rebuild gating uses ~90% fewer input tokens per call in real measurement.
+- **Windows installer no longer flagged**: bundled Ollama keeps its official signature, eliminating the Kaspersky false positive.
+- **More robust evaluation**: a single control-character-laden candidate can no longer stall an entire evaluation batch.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -313,7 +313,7 @@ Most users: the **desktop installer** is the least effort. Want to edit the sour
 
 Grab the installer for your OS from the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest). The aggregate page shows:
 
-> 🇨🇳 **Mainland China source**: [Gitee v0.3.227 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.227) is synced. Domestic installer mirrors for this version are pending; use [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.227) for current packages. [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) retains older versions; check the version in each filename.
+> 🇨🇳 **Mainland China source**: [Gitee v0.3.228 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.228) is synced. Domestic installer mirrors for this version are pending; use [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.228) for current packages. [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) retains older versions; check the version in each filename.
 
 - Current backend source tag: `backend-v*`
 - Current extension release: `extension-v*`, with `openbiliclaw-extension-v*.zip` / `openbiliclaw-extension-v*-firefox.zip` (Firefox temporary debugging); AMO signing-enabled releases also include `openbiliclaw-extension-v*-firefox.xpi` (regular Firefox install)
@@ -619,7 +619,7 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 - 🧠 **Five-Layer Soul Profile** — Event → Preference → Awareness → Insight → Soul, inferring MBTI, cognitive style, and deep needs ([details](docs/modules/soul.md))
 - 🔮 **Interest Probes** — psychological bridging guesses domains you might love but have never explored; right guesses become real interests, wrong ones quietly retire
 - 🧭 **Avoidance Probes** — proactively confirms content forms and style boundaries you want to avoid; nothing is filtered until you confirm
-- 🌐 **Cross-Platform Sources** — Bilibili / Xiaohongshu / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / GitHub / generic Web, so your interests stop being siloed ([details](docs/modules/discovery.md))
+- 🌐 **Cross-Platform Sources** — Bilibili / Xiaohongshu / Douyin / YouTube / TikTok / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / GitHub / generic Web, so your interests stop being siloed ([details](docs/modules/discovery.md))
 - 🎯 **Smart Diversity** — topic quotas + cross-platform interleaving + small-source protection; goodbye to "all AI all day"
 - ⚡ **Instant, deduplicated reshuffle** — ~0.6s; current cards, recommendation history, and the durable seen ledger are excluded by default
 - 💬 **Warm Recommendations** — friend-like explanations of why you'd enjoy something, not "because you watched similar videos"
@@ -637,6 +637,14 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 - 🔧 **Fully Controllable** — create multiple independent channels of the same LLM type and drag global or per-module failover chains; edit your profile or add custom Skills
 
 ## 🏛️ Architecture Overview
+
+TikTok covers: `image proxy → DoH public-address validation → pinned IP / original TLS identity → cache`, following the configured network route.
+
+TikTok: `formal discovery / inspiration → shared request pacing and durable cooldown → signed Web API → candidate pool`; only auto mode allows yt-dlp fallback. See the [acceptance record](docs/platform-source-acceptance.tiktok.md).
+
+TikTok login sync: `extension cookie → validate and persist → safe runtime rebuild on effective credential change → keyword search`; unchanged credentials do not restart tasks.
+
+TikTok account flow: `manual init / explicitly enabled incremental sync → source enabled policy (startup / reload) → bootstrap_profile (likes / favorites / following; history optional; frozen budgets) → extension durable acceptance / viewer-owned lists → account binding / staged result → idempotent events → profile`. Native saves use a separate `local membership → durable native-save job → exact-video favorite / reload read-only confirmation` path. Installed authenticated acceptance is still pending; see the [acceptance ledger](docs/platform-source-acceptance.tiktok.md).
 
 Local embedding: `requests / diagnostics → Ollama automatic acceleration → valid vector; runner failure → CPU retry → validated result`. CPU selection is shared for the backend process lifetime; restarting retries automatic acceleration.
 
@@ -692,6 +700,7 @@ localhost-only. The two edges are mutually exclusive, and the default HTTP path 
 | **Xiaohongshu** | passive collection · search · creator subscriptions · init import | Extension reads your logged-in pages; zero backend crawling |
 | **Douyin** | init import · search · hot · feed | CLI and daemon share the formal producer; extension background tabs fetch candidates for the unified eval pool |
 | **YouTube** | init import · Takeout offline import · search / trending / channel | Extension reads profile signals; steady-state refill is backend-direct |
+| **TikTok** (experimental) | For-You feed · hashtag · creator · search (login cookie) | Web API guest identity with signed requests, yt-dlp fallback, backend-direct refill; an optional login cookie (synced by the extension) enables keyword-search attempts; availability requires separate verification |
 | **X (Twitter)** | init import · search · For-You · followed authors | Server-side read-only cookie replay for discovery; native bookmark executor's first real favorite finished `synced` |
 | **Zhihu** | init import · search · hot · feed · creator · related | Extension reads logged-in tabs; renders as text cards |
 | **Reddit** | init import · search · hot · subreddit · related | Backend rdt-cli for discovery by default; Saved executor is fixture-tested, but the first real write remains uncertain after a 2xx response lacked old-DOM confirmation |
@@ -790,7 +799,7 @@ The current release is summarized in [Recent Updates](#recent-updates) above; fu
 
 ## 🗺️ Roadmap
 
-OpenBiliClaw aims to be your **personalized entry point to the entire web**. Started on Bilibili, it now covers Xiaohongshu, Douyin, YouTube, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, and the generic Web; next:
+OpenBiliClaw aims to be your **personalized entry point to the entire web**. Started on Bilibili, it now covers Xiaohongshu, Douyin, YouTube, TikTok, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, and the generic Web; next:
 
 - **More content sources** — additional BBS, forums, and vertical communities; each platform follows the shared source contract and acceptance gates
 - **Cross-platform interest fusion** — your mechanical-keyboard interest from Bilibili + your coffee-gear interest from Xiaohongshu + your short-video taste from Douyin likes/favorites + your long-form watching and subscriptions from YouTube + the news you like/bookmark on X = one complete you. Profile fusion stops your interests from being fragmented across silos

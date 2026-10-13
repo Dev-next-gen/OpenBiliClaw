@@ -2623,6 +2623,87 @@ def test_discover_douyin_uses_formal_producer_and_ignores_scheduler_master_switc
     assert "本轮分支正常完成" in result.stdout
 
 
+def test_discover_tiktok_requires_enabled_config(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    config = config_module.Config()
+    config.sources.tiktok.enabled = False
+
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(config_module, "load_config", lambda: config)
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["discover", "--source", "tiktok"])
+
+    assert result.exit_code == 1
+    assert "TikTok discovery 未启用" in result.stdout
+
+
+def test_discover_tiktok_uses_formal_producer_and_ignores_scheduler_master_switch(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    config = config_module.Config()
+    config.sources.tiktok.enabled = True
+    config.scheduler.enabled = False
+    captured: dict[str, object] = {}
+
+    class FakeSoulEngine:
+        async def get_profile(self) -> SoulProfile:
+            return SoulProfile(personality_portrait="稳定用户画像" * 30)
+
+    class FakeDatabase:
+        conn = object()
+
+    class FakePipeline:
+        last_admitted_items: list[DiscoveredContent] = []
+
+    class FakeProducer:
+        async def produce_if_due(self, *, limit: int) -> dict[str, object]:
+            captured["limit"] = limit
+            return {
+                "reason": "ok",
+                "discovered": 0,
+                "enqueued": 0,
+                "source_counts": {},
+            }
+
+    def fake_build_producer(**kwargs: object) -> FakeProducer:
+        captured.update(kwargs)
+        return FakeProducer()
+
+    import openbiliclaw.api.runtime_context as runtime_context_module
+
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(config_module, "load_config", lambda: config)
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase())
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: FakeSoulEngine())
+    monkeypatch.setattr(cli_module, "_build_discovery_engine", lambda: object())
+    monkeypatch.setattr(cli_module, "_build_registry", lambda: object())
+    monkeypatch.setattr(cli_module, "_build_memory_manager", lambda: object())
+    monkeypatch.setattr(cli_module, "_build_usage_recorder", lambda: None)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_discovery_candidate_pipeline",
+        lambda **kwargs: FakePipeline(),
+    )
+    monkeypatch.setattr(
+        runtime_context_module,
+        "build_tiktok_discovery_producer",
+        fake_build_producer,
+    )
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["discover", "--source", "tiktok", "--limit", "7"])
+
+    assert result.exit_code == 0
+    assert captured["enabled_override"] is True
+    assert captured["limit"] == 7
+    assert "正式 producer" in result.stdout
+    assert "本轮分支正常完成" in result.stdout
+
+
 def test_discover_douyin_debug_runs_direct_strategy(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,
@@ -4021,7 +4102,7 @@ def test_init_guides_missing_runtime_config_interactively(
     #   6. "y" — allow LAN access
     #   7-9. "" — accept Bili history/favorite/follow init limits
     #   10+. "n" — skip optional source prompts
-    #               (xhs / douyin / youtube / X / zhihu / reddit /
+    #               (xhs / douyin / youtube / tiktok / X / zhihu / reddit /
     #                Linux.do / v2ex / weibo / bangumi / GitHub / Instagram)
     wizard_input = (
         "\n".join(
@@ -4035,6 +4116,7 @@ def test_init_guides_missing_runtime_config_interactively(
                 "",
                 "",
                 "",
+                "n",
                 "n",
                 "n",
                 "n",
@@ -4126,13 +4208,13 @@ def test_init_guides_missing_auth_interactively(
     # test exercising the manual-paste path, send "2" first.
     # v0.3.89+: init asks whether to allow LAN access before the source
     # prompts. Answer yes, accept Bili signal-limit defaults, then send "n"
-    # to XHS / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / V2EX /
+    # to XHS / Douyin / YouTube / TikTok / X / Zhihu / Reddit / Linux.do / V2EX /
     # Weibo / Bangumi / GitHub / Instagram so this test stays focused on the cookie-prompt
     # path.
     result = runner.invoke(
         app,
         ["init"],
-        input="2\nSESSDATA=valid\ny\n\n\n\n" + "n\n" * 12,
+        input="2\nSESSDATA=valid\ny\n\n\n\n" + "n\n" * 13,
     )
 
     assert result.exit_code == 1
@@ -5350,6 +5432,7 @@ def test_select_init_source_shares_accepts_suggested_ratios(
         "xiaohongshu": 3,
         "douyin": 1,
         "youtube": 5,
+        "tiktok": 1,
         # twitter carries its default share (1) even when not in the import's
         # enabled_sources; effective_pool_source_shares drops it while disabled.
         "twitter": 1,
@@ -5398,6 +5481,7 @@ def test_select_init_source_shares_accepts_manual_ratios(
         "xiaohongshu": 2,
         "douyin": 1,
         "youtube": 3,
+        "tiktok": 1,
         # Optional disabled sources carry their default share (1); dropped
         # later while disabled.
         "twitter": 1,

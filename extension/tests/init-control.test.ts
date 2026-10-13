@@ -473,6 +473,7 @@ test("init source options: bilibili is default-checked but deselectable, others 
     "douyin",
     "weibo",
     "youtube",
+    "tiktok",
     "twitter",
     "github",
     "zhihu",

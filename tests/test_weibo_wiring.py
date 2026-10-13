@@ -247,4 +247,6 @@ def test_guided_init_backend_roster_includes_logged_in_weibo() -> None:
 
     assert "weibo" in share_roster
     assert "weibo" in init_roster
-    assert init_roster == share_roster
+    # Guided init covers every share source, tiktok included (its account
+    # bootstrap queue landed with the full-source upgrade).
+    assert init_roster == tuple(share_roster)

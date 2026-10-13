@@ -867,6 +867,7 @@ X (Twitter) 与其它平台不同：init 阶段**没有 bootstrap 导入任务**
 - `--yes-xhs` / `--no-xhs`：跳过小红书交互式提问，直接启用或跳过。
 - `--yes-douyin` / `--no-douyin`：跳过抖音交互式提问，直接启用或跳过。交互式提问默认 No；非交互式终端默认跳过抖音，脚本化 init 应显式传其中一个。
 - `--yes-youtube` / `--no-youtube`：跳过 YouTube 交互式提问，直接启用或跳过。交互式提问默认 No；非交互式终端默认跳过 YouTube，脚本化 init 应显式传其中一个。
+- `--yes-tiktok` / `--no-tiktok`：跳过 TikTok 交互式提问，直接启用或跳过。`--yes-tiktok` 会通过浏览器扩展任务桥默认采集点赞 / 收藏 / 关注（`tt_like` / `tt_collect` / `tt_follow`），观看历史为显式任务可选并纳入本轮首版画像；交互式提问默认 No，非交互式终端默认跳过，`OPENBILICLAW_NO_TIKTOK=1` 优先于 `--yes-tiktok`。
 - `--yes-x` / `--no-x`：跳过 X (Twitter) 交互式提问，直接启用或跳过。只翻转 `[sources.twitter].enabled`，不在 init 期间拉取数据；非交互式终端默认跳过 X，脚本化 init 应显式传其中一个。
 - `--yes-zhihu` / `--no-zhihu`：跳过知乎交互式提问，直接启用或跳过。`--yes-zhihu` 会执行 `bootstrap_events` 并把结果纳入本轮首版画像；非交互式终端默认跳过知乎，脚本化 init 应显式传其中一个。
 - `--yes-reddit` / `--no-reddit`：跳过 Reddit 交互式提问，直接启用或跳过。`--yes-reddit` 会执行 `bootstrap_events` 并把 saved / upvoted / subscribed 结果纳入本轮首版画像，同时开启后续 Reddit discovery；非交互式终端默认跳过 Reddit。
@@ -1256,7 +1257,7 @@ $ openbiliclaw import-youtube ~/Downloads/takeout.zip --dry-run
 
 ### `openbiliclaw discover`
 
-读取当前画像并触发一次内容发现。默认跑 Bilibili 的全部策略；`--source` 还支持 xiaohongshu、douyin、zhihu、reddit、bangumi、github（别名 `gh`）、linuxdo、v2ex 与 weibo（别名 `wb`），分别复用对应的正式 producer / 任务桥和 `source_modes`。非 B 站来源统一把候选写入 `discovery_candidates`，由共享 evaluator admission；小红书命令只负责关键词生产并等待扩展取数。GitHub 正式流程复用 `GitHubDiscoveryProducer`，按三分支预算、持久 cursor 与 cooldown 通过官方 REST 只读公开 repository；查询强制 `is:public`、返回行再拒绝 `private=true`，不生成插件任务、不读 Cookie、不执行 GitHub 写操作。
+读取当前画像并触发一次内容发现。默认跑 Bilibili 的全部策略；`--source` 还支持 xiaohongshu、douyin、tiktok、zhihu、reddit、bangumi、github（别名 `gh`）、linuxdo、v2ex 与 weibo（别名 `wb`），分别复用对应的正式 producer / 任务桥和 `source_modes`。非 B 站来源统一把候选写入 `discovery_candidates`，由共享 evaluator admission；小红书命令只负责关键词生产并等待扩展取数。GitHub 正式流程复用 `GitHubDiscoveryProducer`，按三分支预算、持久 cursor 与 cooldown 通过官方 REST 只读公开 repository；查询强制 `is:public`、返回行再拒绝 `private=true`，不生成插件任务、不读 Cookie、不执行 GitHub 写操作。TikTok 复用正式 `TiktokDiscoveryProducer`（`enabled_override` 旁路 daemon 总开关，镜像 douyin 分支形态）：推荐流 / 话题标签 / 创作者按预算执行，配置登录 Cookie 时搜索分支一并挂载。
 
 Instagram 正式流程复用 `InstagramDiscoveryProducer`，只执行 `[sources.instagram].source_modes` 中的 `topic` / `creator` 直接页面，不主动提交 Instagram Search；公开候选进入统一 `discovery_candidates` 后再由 evaluator 处理。页面自身请求是否改变 Recent Searches 仍需独立前后对照，不能仅凭直接导航推断。它不会把个性化 Explore/Home Feed 或不稳定私有 keyword SERP 冒充成 formal discover。
 
@@ -1288,6 +1289,15 @@ $ openbiliclaw discover --source xiaohongshu
 
 # 忽略 4 小时节流
 $ openbiliclaw discover --source xiaohongshu --force
+
+# 触发 TikTok discovery（需先在配置启用 [sources.tiktok]）
+$ openbiliclaw discover --source tiktok --limit 20
+TikTok 内容发现
+发现摘要
+  发现条数: 6
+  入池候选: 6
+  来源: tiktok
+  来源分布: tiktok_feed:3, tiktok_tag:3
 
 # 触发 douyin discovery
 # Cookie 可由扩展自动同步；下面的环境变量仅用于调试时显式覆盖
@@ -1676,3 +1686,12 @@ $ openbiliclaw db-repair
 ### Stub 命令的输出约定
 
 当前仍是 stub 的命令会统一使用”开发中”占位态输出，避免与真实错误混淆，并会附带建议的下一步命令。
+
+
+### TikTok 来源验收补全（2026-10-04）
+
+新增 `discover-tiktok --mode feed|tag|user|search --query TEXT --limit 1..20`：使用配置中的网络路线及可选 Cookie，在临时目录执行只读取数 smoke，不写生产候选/记忆/画像。正式 `discover --source tiktok` 支持 rate_limited、no_keywords 和 degraded 的真实状态提示。
+
+TikTok full-source 初始化在后台标签页顺序读取喜欢、收藏、关注三个默认 scope（网页历史可选）；默认等待 480 秒，覆盖扩展最多 360 秒绝对 deadline 和领取/回传余量，可用 `OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS` 调整。明确登录的空列表与登录失败分别显示，不再把未登录描述为 empty。
+
+TikTok 初始化的请求提示只列三个默认范围；结果摘要将无历史数据标为“默认不采集”，避免把未请求历史写成成功采集 0 条。

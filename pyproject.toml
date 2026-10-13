@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openbiliclaw"
-version = "0.3.227"
+version = "0.3.228"
 description = "Your local-first, cross-platform AI discovery friend for Bilibili, Zhihu, and more."
 readme = "README.md"
 license = { text = "MIT" }
@@ -30,6 +30,10 @@ dependencies = [
     "httpcore>=1.0,<2",
     "scrapetube>=2.1",
     "yt-dlp>=2024.1.0",
+    # TikTok web API backend (sources/tiktok_web.py): Chrome TLS impersonation
+    # — TikTok's edge rejects plain-OpenSSL clients. Also an optional yt-dlp
+    # dependency, so the version lines stay compatible by construction.
+    "curl-cffi>=0.15",
     "bilibili-api-python>=16",
     # openai>=3 / anthropic>=1 vendor httpx internally as ``httpx2`` and their
     # isinstance guard rejects plain ``httpx.AsyncClient`` instances passed via

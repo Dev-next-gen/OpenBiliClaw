@@ -162,6 +162,24 @@ def test_local_save_without_auto_sync_never_invokes_adapter(db: Database) -> Non
     assert adapter.calls == []
 
 
+def test_tiktok_local_save_stays_pending_without_auto_sync(db: Database) -> None:
+    """TikTok now routes native save through the extension adapter; a local
+    save commits as ``pending`` and the default ``auto_sync=False`` path
+    performs no upstream mutation."""
+    adapter = FakeAdapter(NativeSaveCapability("tiktok", True, False, False))
+    service = SavedSyncService(db, NativeSaveRouter([adapter]))
+    item = SavedItemInput("tiktok", "7340000000000000001")
+
+    result = service.save_local("favorite", item, auto_sync=False)
+
+    row = db.get_saved_membership("favorite", item.item_key)
+    assert row is not None
+    assert row["sync_status"] == "pending"
+    assert result.saved is True
+    assert result.sync_status == "pending"
+    assert adapter.calls == []
+
+
 def test_validate_native_save_selection_reads_existing_membership_without_mutation(
     db: Database,
 ) -> None:

@@ -30,6 +30,7 @@ DEFAULT_LINUXDO_BOOTSTRAP_DEDUPE_HOURS = 6.0
 DEFAULT_V2EX_BOOTSTRAP_DEDUPE_HOURS = 6.0
 DEFAULT_WEIBO_BOOTSTRAP_DEDUPE_HOURS = 6.0
 DEFAULT_INSTAGRAM_BOOTSTRAP_DEDUPE_HOURS = 6.0
+DEFAULT_TIKTOK_BOOTSTRAP_DEDUPE_HOURS = 6.0
 
 _RECENT_TASK_STATUSES = ("pending", "in_progress", "completed", "failed")
 Notify = Callable[[str], None]
@@ -51,6 +52,7 @@ _BOOTSTRAP_TASK_TABLES: tuple[tuple[str, str, str], ...] = (
     ("v2ex", "v2ex_tasks", "bootstrap_profile"),
     ("weibo", "weibo_tasks", "bootstrap_events"),
     ("instagram", "instagram_tasks", "bootstrap_events"),
+    ("tiktok", "tiktok_tasks", "bootstrap_profile"),
 )
 
 
@@ -452,13 +454,13 @@ def seed_guided_init_attempts(
 ) -> tuple[str, ...]:
     """Atomically seed scheduler timestamps for successful init collectors.
 
-    XHS, Douyin, YouTube, and Zhihu have ambiguous ``empty`` results: the
-    extension can complete the task while the site is logged out or blocked,
-    so only ``ok`` is evidence that a usable bootstrap pull completed. Reddit
-    and Linux.do are deliberately different: their bootstrap tasks first
-    positively resolve the current account and map an unauthenticated response
-    to ``login_required``; therefore ``empty`` is a genuine successful-empty
-    pull for those sources.
+    XHS, Douyin, YouTube, Zhihu, and TikTok have ambiguous ``empty`` results:
+    the extension can complete the task while the site is logged out or
+    blocked, so only ``ok`` is evidence that a usable bootstrap pull
+    completed. Reddit and Linux.do are deliberately different: their
+    bootstrap tasks first positively resolve the current account and map an
+    unauthenticated response to ``login_required``; therefore ``empty`` is a
+    genuine successful-empty pull for those sources.
     """
     eligible: list[str] = []
     for source, status in (
@@ -466,12 +468,13 @@ def seed_guided_init_attempts(
         ("dy", statuses.get("dy")),
         ("yt", statuses.get("yt")),
         ("zhihu", statuses.get("zhihu")),
+        ("tiktok", statuses.get("tiktok")),
     ):
         if str(status or "").strip().lower() == "ok":
             eligible.append(source)
     for source in ("reddit", "linuxdo"):
         if str(statuses.get(source) or "").strip().lower() in {"ok", "empty"}:
-            # These ``empty`` results are evidence-backed, unlike the four
+            # These ``empty`` results are evidence-backed, unlike the five
             # browser pages above; keep this distinction explicit so future
             # status refactors do not turn a logged-out result into a successful
             # schedule stamp.
@@ -672,6 +675,133 @@ def enqueue_dy_bootstrap(
     return _created_or_budget_result(
         task_id,
         budget_message="  [yellow]抖音初始化信号未导入: 今日任务预算已用完。[/yellow]",
+        notify=notify,
+    )
+
+
+def _tiktok_reusable_recent_task(
+    queue: Any, *, recent_hours: float, expected_payload: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Reuse only the same profile-writing contract and successful latest result."""
+    from openbiliclaw.sources.task_result_protocol import staged_terminal_status
+
+    find_recent = getattr(queue, "find_recent_task", None)
+    if not callable(find_recent):
+        return None
+
+    def same_contract(row: dict[str, Any]) -> bool:
+        try:
+            payload = json.loads(str(row.get("payload_json") or "{}"))
+        except (TypeError, ValueError):
+            return False
+        return isinstance(payload, dict) and all(
+            payload.get(key) == expected_payload.get(key)
+            for key in (
+                "scopes",
+                "profile_update",
+                "max_items_per_scope",
+                "max_scroll_rounds",
+                "incremental",
+                "incremental_owner",
+            )
+        )
+
+    active = find_recent(
+        "bootstrap_profile", recent_hours=recent_hours, statuses=("pending", "in_progress")
+    )
+    if isinstance(active, dict) and same_contract(active):
+        return active
+    terminals = [
+        row
+        for status in ("completed", "failed")
+        if isinstance(
+            row := find_recent("bootstrap_profile", recent_hours=recent_hours, statuses=(status,)),
+            dict,
+        )
+    ]
+    if not terminals:
+        return None
+    # A newer failed attempt must not be hidden by the queue's completed-first
+    # ordering. On same-second ties, negative evidence wins conservatively.
+    latest = max(
+        terminals,
+        key=lambda row: (
+            str(row.get("created_at", "")),
+            row.get("status") == "failed",
+            str(row.get("id", "")),
+        ),
+    )
+    if latest.get("status") != "completed" or not same_contract(latest):
+        return None
+    return latest if staged_terminal_status(latest.get("result_json")) in {"ok", "empty"} else None
+
+
+@_serialized_enqueue
+def enqueue_tiktok_bootstrap(
+    database: Any,
+    *,
+    force: bool = False,
+    incremental: bool = False,
+    incremental_owner: str = "",
+    notify: Notify | None = None,
+) -> BootstrapEnqueueResult:
+    """Enqueue likes, favorites and following without requiring web watch history."""
+    from openbiliclaw.sources.tiktok_tasks import TiktokTaskQueue
+
+    scroll_rounds = int(os.environ.get("OPENBILICLAW_TIKTOK_BOOTSTRAP_SCROLL_ROUNDS", "15"))
+    max_items = int(
+        os.environ.get(
+            "OPENBILICLAW_TIKTOK_BOOTSTRAP_MAX_ITEMS",
+            str(INIT_BOOTSTRAP_MAX_ITEMS_PER_SCOPE),
+        )
+    )
+
+    payload = _incremental_payload(
+        {
+            # Desktop TikTok does not consistently expose watch history. Keep
+            # its explicit scope supported, but never make init or periodic
+            # profile refresh depend on an unavailable account surface.
+            "scopes": ["tt_like", "tt_collect", "tt_follow"],
+            "profile_update": True,
+            "max_items_per_scope": max(1, max_items),
+            "max_scroll_rounds": max(0, scroll_rounds),
+        },
+        incremental,
+        incremental_owner,
+    )
+
+    try:
+        queue = TiktokTaskQueue(database)
+        with _bootstrap_admission_transaction(database):
+            dedupe_hours = _dedupe_hours(
+                "OPENBILICLAW_TIKTOK_BOOTSTRAP_DEDUPE_HOURS",
+                DEFAULT_TIKTOK_BOOTSTRAP_DEDUPE_HOURS,
+            )
+            if not force and dedupe_hours > 0:
+                recent = _tiktok_reusable_recent_task(
+                    queue, recent_hours=dedupe_hours, expected_payload=payload
+                )
+                if recent is not None:
+                    reused = _recent_reuse_result(
+                        recent,
+                        message="  [dim]复用匹配的 TikTok 画像采集任务 ({status})。[/dim]",
+                        notify=notify,
+                    )
+                    if reused is not None:
+                        return reused
+
+            active = _active_bootstrap_result(database, notify=notify)
+            if active is not None:
+                return active
+
+            task_id = queue.enqueue_with_id("bootstrap_profile", payload, daily_budget=10)
+    except Exception as exc:
+        _notify(notify, f"  [yellow]TikTok 初始化信号未导入: {exc}[/yellow]")
+        return BootstrapEnqueueResult(task_id=None, created=False, reason="enqueue_error")
+
+    return _created_or_budget_result(
+        task_id,
+        budget_message="  [yellow]TikTok 初始化信号未导入: 今日任务预算已用完。[/yellow]",
         notify=notify,
     )
 
@@ -1341,6 +1471,7 @@ __all__ = [
     "enqueue_linuxdo_bootstrap",
     "enqueue_instagram_bootstrap",
     "enqueue_reddit_bootstrap",
+    "enqueue_tiktok_bootstrap",
     "enqueue_v2ex_bootstrap",
     "enqueue_xhs_bootstrap",
     "enqueue_yt_bootstrap",

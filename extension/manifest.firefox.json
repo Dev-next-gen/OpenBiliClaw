@@ -33,6 +33,7 @@
         "*://*.bilibili.com/*",
         "*://*.xiaohongshu.com/*",
         "*://*.douyin.com/*",
+        "*://*.tiktok.com/*",
         "*://*.youtube.com/*",
         "*://*.zhihu.com/*",
         "*://*.reddit.com/*",
@@ -117,6 +118,15 @@
             ],
             "run_at": "document_start",
             "world": "MAIN"
+        },
+        {
+            "matches": [
+                "*://*.tiktok.com/*"
+            ],
+            "js": [
+                "content/tiktok.js"
+            ],
+            "run_at": "document_idle"
         },
         {
             "matches": [

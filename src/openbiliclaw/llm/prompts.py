@@ -216,9 +216,41 @@ _ADAPTIVE_DIALOGUE_STYLE = (
     "用户指定长度或格式时照做，一句话只讲必要要点，不用长串逗号、括号堆成伪短答。"
     "概括画像或工具结果时只提炼用户所需的重点，除非用户要求，不展示内部置信度、权重等数据；"
     "仍需如实说明影响结论的不确定性。复杂任务按需要充分分析、使用工具并完成必要步骤。"
-    "只有缺少影响正确性或执行的关键信息，或当前访谈角色需要探索时，才聚焦澄清，"
     "无需每次附带追问。自然友善，不嘲讽或评判问题难易。"
     "历史对话的时间标签仅供理解上下文，不要复制为回复前缀；用户询问时间时正常回答。"
+)
+
+
+# Product calibration (2026-10-13): one clarification for ordinary requests,
+# two questions before an exploration summary. These are prompt-level defaults,
+# not measured optimal limits; re-evaluate multi-turn behavior after model swaps.
+_DIALOGUE_FOLLOWUP_POLICY = (
+    "对话收敛规则（适用于所有角色、语气和新旧聊天入口）：优先满足用户当前需求，"
+    "画像完整度不是继续追问的理由。\n"
+    "每轮选择一种回复形态：交付结果，或提出必要问题。"
+    "交付结果时只给答案、建议、执行结果或总结；必要问题时只问一个具体问题，"
+    "可简短说明为什么需要它。两种形态互斥，不能先给一整份结果再追加问题或下一步邀请；"
+    "形态名称仅用于内部判断，不输出给用户。\n"
+    "1. 信息已足够时直接回答或执行必要步骤，自然结束；"
+    "接受用户明确表达的偏好，不要求用户解释动机，也不在结尾例行邀请继续聊。"
+    "模糊但可以给出有用结果时，先给一版可纠正的结果，必要时简短说明假设。\n"
+    "2. 只有不同理解会明显改变结果或执行范围、且上下文和可用工具无法补齐时，"
+    "才问一个最关键、容易回答的问题；不要重问已经回答的信息。"
+    "普通聊天中，同一需求默认最多澄清一轮；用户回答后，即使仍不完整，也优先给出"
+    "当前能确定的结果。仍缺必填参数或授权时，说明受阻部分、完成可做部分并停下，"
+    "不猜测参数、不扩大屏蔽或写入范围，不把未完成的动作说成已完成。\n"
+    "3. 只有用户主动要求探索或明确同意访谈时，才进入探索；仅选择访谈角色不代表每轮都要采访。"
+    "探索中每轮最多一个问题；信息足够就总结，连续提问最多两轮后先总结已知结论和不确定处，"
+    "给出可用建议并结束本轮探索，不在总结后附带新问题；等待用户主动继续才展开。\n"
+    "4. 用户表示不知道、不想继续或先这样时收敛；用户让你决定时采用合理默认给结果，"
+    "不追问这些表达背后的原因。用户提出新任务时按新任务判断，不机械沿用上一任务的轮数。"
+    "保留用户表述的时间范围：最近的偏好不直接当成永久偏好；未知原因允许保持未知。\n"
+    "收尾检查：本轮已满足需求或达到探索轮数时，以陈述句结束。"
+    "不要再附加偏好选项、推荐用户回答的下一组问题或‘想继续的话可以聊……’。"
+    "例如‘最近只想看轻松的’已足够，回应‘好，最近按轻松、不烧脑的方向来。’即可；"
+    "问过内容类型后用户说‘不知道，你决定吧’，可答‘那先选慢生活或手作，节奏慢、适合放松。’，"
+    "这就完成了请求，下一步由用户自行发起；"
+    "两轮探索已知‘看人做事、慢节奏、少旁白’时，直接总结并建议手作或慢生活内容，结束。"
 )
 
 
@@ -257,9 +289,9 @@ def build_socratic_dialogue_prompt(
     including any ``reply_style`` line — while every other system-prompt
     segment stays byte-identical. Empty (default) changes nothing.
 
-    ``socratic=False`` lets the agent's selected skill own any interviewing
-    behavior. The shared style then scales depth to the current request;
-    legacy callers keep the original Socratic instruction by default.
+    ``socratic=False`` scales response depth to the current request. Both
+    styles share the same follow-up and completion policy; Socratic exploration
+    requires the user's intent rather than merely selecting an interview skill.
     """
     friend_label = _friend_label_from_mix(source_platform_mix)
     tone_block = dialogue_tone_prompt.strip() or _render_tone_profile(
@@ -269,7 +301,7 @@ def build_socratic_dialogue_prompt(
         [
             "你是 OpenBiliClaw，一个像朋友一样理解用户的 AI 伙伴。",
             (
-                "请使用苏格拉底式对话风格：温和、追问动机、确认理解，"
+                "先回应当前需求；仅当用户主动要求探索时，才用苏格拉底式假设与确认帮助理解，"
                 f"但整体更像会接话的{friend_label}，不像客服，也不要像咨询师。"
                 if socratic
                 else _ADAPTIVE_DIALOGUE_STYLE
@@ -281,6 +313,7 @@ def build_socratic_dialogue_prompt(
                 "内容平台自身的推荐算法，必须把本地推荐与平台推荐区分清楚。"
             ),
             tone_block,
+            _DIALOGUE_FOLLOWUP_POLICY,
             "以下是当前用户的 core memory，请把它作为理解用户的背景，而不是机械复述：",
             core_memory_text,
         ]
@@ -2852,6 +2885,10 @@ PLATFORM_SUPPLY_ADVANTAGES: dict[str, str] = {
     ),
     "douyin": "短视频 / 娱乐 / 热点 / 搞笑 / 才艺。短平快、口语、跟得上当下热度。",
     "youtube": ("英文长内容 / 纪录片 / 讲座 / 国际视角。2-4 词,中英文按话题选最常见的搜索语言。"),
+    "tiktok": (
+        "海外短视频 / 话题标签驱动 / 趋势挑战 / 生活技巧 / 娱乐。产出词最终会被"
+        "压缩成无空格 hashtag 使用,优先英文单词或可连写的短组合,避免长句。"
+    ),
     "twitter": (
         "实时讨论 / 英文技术 / 观点 / 资讯。1-4 词,技术 / 小众话题尤其优先英文,华语圈话题可用中文。"
     ),
@@ -2932,7 +2969,7 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     "<rules>\n"
     "1. 输出必须是严格 JSON 对象,不要附带解释。\n"
     "2. JSON 的 key 必须是 <platforms> 里出现的 platform 标识符"
-    "(bilibili / xiaohongshu / douyin / youtube / twitter / github / zhihu / reddit / "
+    "(bilibili / xiaohongshu / douyin / youtube / tiktok / twitter / github / zhihu / reddit / "
     "bangumi / linuxdo / v2ex / weibo / instagram),"
     "每个 key 的值是一个"
     "字符串数组。**只输出本轮 <platforms> 里给到的平台**,不要凭空加平台。"
@@ -2969,6 +3006,7 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     '  "xiaohongshu": ["手冲咖啡 入门 教程", "通勤 穿搭 真实体验"],\n'
     '  "douyin": ["AI 绘画 整活", "城市 夜骑 热门"],\n'
     '  "youtube": ["machine learning explained", "城市规划 纪录片"],\n'
+    '  "tiktok": ["satisfying", "historyfacts"],\n'
     '  "twitter": ["rust async runtime", "llm agents discussion"],\n'
     '  "zhihu": ["AI 工具 经验", "城市规划 问答"],\n'
     '  "reddit": ["local LLM agents", "open source AI tooling"],\n'
@@ -3006,7 +3044,7 @@ Return ONLY a strict JSON object with exactly this shape:
     {
       "interest": "string",
       "axis_id_or_label": "existing axis_id or exact axis_label",
-      "platform": "bilibili|xiaohongshu|douyin|youtube|twitter|github|zhihu|reddit|bangumi|linuxdo|v2ex|weibo|instagram",
+      "platform": "bilibili|xiaohongshu|douyin|youtube|tiktok|twitter|github|zhihu|reddit|bangumi|linuxdo|v2ex|weibo|instagram",
       "core_concept": "short searchable concept",
       "decoration": "optional style marker",
       "recency_sensitivity": "low|medium|high"

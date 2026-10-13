@@ -51,7 +51,7 @@ class SourceAuthContract(BaseModel):
 | `browser_heartbeat` | 插件报告登录 cookie 存在 | xiaohongshu、zhihu、linuxdo（仅 `_t` 布尔存在性） |
 | `local_file` | 只读了本地凭据文件 | reddit |
 | `task_history` | 由历史任务结果反推 | zhihu、linuxdo（无心跳时回落） |
-| `none` | 无验证能力，或不需要 | youtube、bangumi / github / v2ex（未配置令牌时）、linuxdo（无心跳且无任务历史时） |
+| `none` | 无验证能力，或不需要 | youtube、tiktok（未配置 Cookie 时）、bangumi / github / v2ex（未配置令牌时）、linuxdo（无心跳且无任务历史时） |
 
 ### 三端如何渲染这份契约
 
@@ -285,6 +285,26 @@ source status detail 会列出冲突来源，`GET /api/sources/v2ex/identity` �
 统一验证动作登记为 `VERIFY_ACTIONS["v2ex"] = "live_probe"`，相关契约回归见
 `tests/test_source_auth_contract.py`。
 
+## TikTok 的接入
+
+TikTok 是「匿名可用 + 可选可验证凭据」形态（与 Bangumi 同族）。Web API 后端以 TikTok 自己
+签发的**访客身份**读取公开推荐流 / 创作者 / 话题标签列表，访客身份是完整合法的运行模式，
+因此 `auth_required` 恒为 `False`、`legacy_state` 恒为 `no_auth`：无 Cookie 时返回与 YouTube
+同形的 `credential=none` / `verify_method=none`。
+
+可选登录 Cookie（`[sources.tiktok].cookie_env`，默认 `OPENBILICLAW_TIKTOK_COOKIE`，兜底
+`data/tiktok_cookie.json`）解锁关键词搜索（访客身份被上游 gate，2026-10-03 实测）与更高限额。
+配置后契约报 `credential=present`（origin `env` / `data_file`）+ `verify_method=live_probe`：
+主动探针调用 `/passport/token/beat/web/`（无签名、仅带 cookie 的会话心跳，
+`probe_tiktok_login`），`{"message":"success"}` 为 verified，401/403 或显式 error 为 failed，
+传输失败与风控空响应一律 indeterminate（绝不误判为失效）。`VERIFY_ACTIONS["tiktok"]` 相应登记为
+`live_probe`，动作恒定而方法的读数随有无凭据变化（与 Bangumi 同一 action-vs-method 拆分）。
+
+凭据写入门面同步开通：`CREDENTIAL_SPECS["tiktok"]` 结构门要求 sessionid / sessionid_ss /
+sid_tt 至少其一（访客 jar 只有 ttwid / msToken），live gate 复用同一探针，
+`POST /api/sources/tiktok/credential` 与 `PUT /api/config` 两个写入面验证强度一致，落盘
+`data/tiktok_cookie.json`。
+
 ## Instagram 的接入
 
 Instagram 使用现有 capability-specific contract，不新增第二套鉴权模型：
@@ -311,3 +331,18 @@ Instagram 使用现有 capability-specific contract，不新增第二套鉴权�
 - `src/openbiliclaw/web/shared/source-status.js`（三端共享渲染）
 - `scripts/source_contract_metrics.py`（CI 量化门）
 - `tests/test_source_auth_contract.py`、`tests/test_douyin_login_probe.py`
+
+
+### TikTok 来源验收补全（2026-10-04）
+
+TikTok 的 passport heartbeat verified 只证明会话有效；搜索可用性须由单独真实搜索验收证明，不由凭据验证状态推导。
+
+### TikTok 的 capability 与账号任务边界（2026-10-11）
+
+公开 discover 仍为 ready；profile/bootstrap/incremental/native-save 独立使用登录态 readiness。passport Cookie 探针只证明会话，不证明浏览器列表可采集。任务还必须从当前 viewer 专属证据确认本人列表；DOM observed claims 不标记 verified。后端绑定首个账号的 opaque key，拒绝跨账号画像混合，普通 smoke 不绑定全局账号。Cookie 仍按原有统一凭据路径存储，不能描述成“后端不接触 Cookie”。
+
+### TikTok Cookie 更新后的客户端刷新
+
+`persist_credential("tiktok", "cookie", ...)` 比较保存前后的有效凭据（env 仍优先于文件），通过 `PersistResult.runtime_dirty` 通知 API。有效值变化后，统一写入口经现有 lane handoff 重建捕获 Cookie 的运行时客户端，挂载登录态搜索；重复上报及 env 覆盖下的文件变更不触发重建。公开请求/响应字段保持兼容。
+
+TikTok 的凭据刷新关闭 `run_post_reload_llm_work`：更新搜索客户端不会顺带发起额外模型预热/画像学习，仍按现有 scheduler 与 lane 策略恢复后台组件。

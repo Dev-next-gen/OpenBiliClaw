@@ -23,6 +23,7 @@ _TASK_TABLES = frozenset(
         "v2ex_tasks",
         "weibo_tasks",
         "instagram_tasks",
+        "tiktok_tasks",
     }
 )
 

@@ -409,7 +409,7 @@ _KEYWORD_INSPIRATION_PLATFORMS_OPTION = typer.Option(
     "-p",
     help=(
         "目标平台，可重复传或逗号分隔。默认 bilibili；可选 bilibili/xiaohongshu/"
-        "douyin/youtube/twitter/github/zhihu/reddit/bangumi/linuxdo/v2ex/weibo。"
+        "douyin/youtube/tiktok/twitter/github/zhihu/reddit/bangumi/linuxdo/v2ex/weibo。"
     ),
 )
 _KEYWORD_INSPIRATION_KIND_OPTION = typer.Option(
@@ -525,6 +525,7 @@ _DEFAULT_REDDIT_BOOTSTRAP_WAIT_SECONDS = 180.0
 # legal task execution budget (29 minutes + 30 seconds result grace).
 _DEFAULT_LINUXDO_BOOTSTRAP_WAIT_SECONDS = 32.5 * 60.0
 _DEFAULT_V2EX_BOOTSTRAP_WAIT_SECONDS = 300.0
+_DEFAULT_TIKTOK_BOOTSTRAP_WAIT_SECONDS = 480.0
 _EXTENSION_PRESENCE_REQUIRED_WARNING = (
     "WARN extension presence required; backend will pause background LLM work "
     "after grace period if no extension client connects"
@@ -3442,6 +3443,7 @@ def _kick_task_dispatcher(source: str) -> None:
         "linuxdo",
         "v2ex",
         "instagram",
+        "tiktok",
     }:
         return
     import urllib.error
@@ -3689,6 +3691,131 @@ def _collect_dy_bootstrap_events(
             for key in scope_counts:
                 short = key.removeprefix("dy_") if key.startswith("dy_") else key
                 if source == f"dy_bootstrap_{short}":
+                    scope_counts[key] += 1
+    result_status = str(result.get("status", "")).strip()
+    status_label = "degraded" if result_status == "degraded" else ("ok" if events else "empty")
+    return events, scope_counts, status_label
+
+
+def _enqueue_tiktok_bootstrap_task(
+    *,
+    force: bool = False,
+    kick: bool = True,
+    incremental: bool = False,
+) -> str | None:
+    """Resolve the runtime database and enqueue the TikTok bootstrap task."""
+    from openbiliclaw.sources import source_bootstrap
+
+    try:
+        database = _get_runtime_database()
+    except Exception as exc:
+        console.print(f"  [yellow]TikTok 初始化信号未导入: 数据库不可用: {exc}[/yellow]")
+        return None
+    if not hasattr(database, "conn"):
+        return None
+
+    result = source_bootstrap.enqueue_tiktok_bootstrap(
+        database,
+        force=force,
+        incremental=incremental,
+        notify=console.print,
+    )
+    if result.created and result.task_id and kick:
+        _kick_task_dispatcher("tiktok")
+    return result.task_id
+
+
+def _collect_tiktok_bootstrap_events(
+    task_id: str | None,
+    *,
+    max_wait_seconds: float | None = None,
+    cancel_event: threading.Event | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, int], str]:
+    """Wait for and harvest a previously-enqueued TikTok bootstrap task.
+
+    Returns ``(events, scope_counts, status_label)`` where
+    ``status_label`` is one of:
+      - ``"ok"``         — task completed with videos
+      - ``"degraded"``   — task completed with usable videos, but at least
+        one scope could not prove pagination completeness
+      - ``"empty"``      — task completed but extension returned 0 videos
+        (only a positively observed signed-in empty list)
+      - ``"timeout"``    — wait window expired, task still pending
+      - ``"failed"``     — extension or backend reported error
+      - ``"skipped"``    — no task_id (DB unavailable / budget exhausted)
+    """
+    import json
+    import time
+
+    from openbiliclaw.sources.tiktok_tasks import (
+        TiktokTaskQueue,
+        tiktok_bootstrap_videos_to_events,
+    )
+
+    if not task_id:
+        return [], {}, "skipped"
+
+    if max_wait_seconds is None:
+        max_wait_seconds = float(
+            os.environ.get(
+                "OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS",
+                str(_DEFAULT_TIKTOK_BOOTSTRAP_WAIT_SECONDS),
+            )
+        )
+
+    try:
+        database = _get_runtime_database()
+    except Exception:
+        return [], {}, "skipped"
+    if not hasattr(database, "conn"):
+        return [], {}, "skipped"
+
+    queue = TiktokTaskQueue(database)
+    deadline = time.monotonic() + max(0.0, max_wait_seconds)
+    poll_interval = 0.5
+    task: dict[str, Any] | None = None
+    while True:
+        if cancel_event is not None and cancel_event.is_set():
+            return [], {}, "timeout"
+        task = queue.get(task_id)
+        status = str((task or {}).get("status", "")).strip()
+        if status in {"completed", "failed"}:
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(poll_interval)
+
+    if not task:
+        return [], {}, "timeout"
+    if task.get("status") == "failed":
+        return [], {}, "failed"
+    if task.get("status") != "completed":
+        return [], {}, "timeout"
+
+    try:
+        result = json.loads(str(task.get("result_json") or "{}"))
+    except json.JSONDecodeError:
+        return [], {}, "failed"
+    videos = [v for v in result.get("videos", []) if isinstance(v, dict)]
+    events = tiktok_bootstrap_videos_to_events(videos)
+    raw_counts = result.get("scope_counts", {})
+    scope_counts = {"tt_like": 0, "tt_collect": 0, "tt_history": 0, "tt_follow": 0}
+    if isinstance(raw_counts, dict):
+        for key in scope_counts:
+            with suppress(Exception):
+                scope_counts[key] = int(raw_counts.get(key, 0) or 0)
+    if not any(scope_counts.values()):
+        # Fall back to per-event count: tiktok_bootstrap_videos_to_events
+        # tags each event's metadata.import_source as
+        # "tt_bootstrap_<scope_short>" (like / collect / history / follow).
+        for event in events:
+            metadata = event.get("metadata", {})
+            if not isinstance(metadata, dict):
+                continue
+            source = str(metadata.get("import_source", ""))
+            for key in scope_counts:
+                short = key.removeprefix("tt_") if key.startswith("tt_") else key
+                if source == f"tt_bootstrap_{short}":
                     scope_counts[key] += 1
     result_status = str(result.get("status", "")).strip()
     status_label = "degraded" if result_status == "degraded" else ("ok" if events else "empty")
@@ -5270,6 +5397,32 @@ def _dy_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str, 
                 "context": str(event.get("context", "")).strip(),
                 "metadata": metadata,
                 "source_platform": "douyin",
+            }
+        )
+    return [row for row in rows if row.get("title") or row.get("url")]
+
+
+def _tiktok_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert TikTok bootstrap events into profile-builder history rows.
+
+    Mirror of ``_dy_events_to_history_items`` — preserves the
+    natural-language ``context`` and tags ``source_platform=tiktok``
+    so cross-source analysis remains uniform.
+    """
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        metadata = event.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        rows.append(
+            {
+                "title": str(event.get("title", "")).strip(),
+                "url": str(event.get("url", "")).strip(),
+                "author": str(metadata.get("author", "")).strip(),
+                "event_type": str(event.get("event_type", "")).strip(),
+                "context": str(event.get("context", "")).strip(),
+                "metadata": metadata,
+                "source_platform": "tiktok",
             }
         )
     return [row for row in rows if row.get("title") or row.get("url")]
@@ -7768,6 +7921,71 @@ def _ask_dy_inclusion() -> bool:
     return True
 
 
+def _ask_tiktok_inclusion() -> bool:
+    """Decide whether to enqueue the TikTok bootstrap task on this init.
+
+    Resolution order (first match wins):
+      1. ``OPENBILICLAW_NO_TIKTOK=1`` env var → False, silent
+      2. Non-interactive terminal (CI / piped stdin) → **False**, silent.
+         Conservative default: the account scopes require a logged-in
+         tiktok.com browser session and a foreground tab, so scripted runs
+         must opt in explicitly.
+      3. Interactive terminal → ask the user with default N, then
+         (if Y) walk them through a prep checklist.
+    """
+    if os.environ.get("OPENBILICLAW_NO_TIKTOK", "").strip() == "1":
+        console.print("[dim]  跳过 TikTok 数据接入(OPENBILICLAW_NO_TIKTOK=1)。[/dim]")
+        return False
+    if not _is_interactive_terminal():
+        return False
+
+    console.print()
+    console.print("[bold]🎬 TikTok 数据接入(可选)[/bold]")
+    console.print(
+        "把你的 TikTok[bold cyan]点赞 / 收藏 / 关注[/bold cyan]混进画像,"
+        "系统能读懂你跨平台的口味。"
+    )
+    console.print()
+    console.print("启用需要:")
+    console.print("  1. 装好 OpenBiliClaw 浏览器扩展")
+    console.print(
+        "     [link=https://github.com/whiteguo233/OpenBiliClaw/releases]"
+        "https://github.com/whiteguo233/OpenBiliClaw/releases[/link]"
+    )
+    console.print("  2. 浏览器登录 [link=https://www.tiktok.com]https://www.tiktok.com[/link]")
+    console.print()
+    console.print(
+        "[dim]说 N 也没关系,init 会用其他已选来源建画像;"
+        "以后想加随时再跑一次 init,或设 OPENBILICLAW_NO_TIKTOK=1 永久跳过。[/dim]"
+    )
+    console.print()
+
+    if not typer.confirm("加入 TikTok 数据?", default=False):
+        console.print("[dim]  已选择跳过,本次 init 不会请求 TikTok 数据。[/dim]")
+        return False
+
+    console.print()
+    console.print("[bold]准备 TikTok 接入[/bold]")
+    console.print("请确认以下三件事都做了:")
+    console.print("  [cyan]☐[/cyan] 装好了 OpenBiliClaw 浏览器扩展")
+    console.print("  [cyan]☐[/cyan] 浏览器保持打开，扩展已连接当前后端")
+    console.print("  [cyan]☐[/cyan] 已经登录了 https://www.tiktok.com")
+    console.print()
+    console.print(
+        "接下来扩展会在浏览器中打开一个后台标签页，依次读取点赞 / 收藏 /"
+        "观看历史 / 关注四个范围，完成后自动关闭。最多等待约 8 分钟；"
+        "如果页面无法确认或列表加载受限，会报告失败或部分完成。"
+    )
+    console.print()
+    if not typer.confirm("准备好了吗,可以开始吗?", default=True):
+        console.print(
+            "[dim]  已暂缓 TikTok 接入,本次 init 不会拉 TikTok 数据。装好扩展+登录"
+            "TikTok 后随时再跑一次 init 就能补上。[/dim]"
+        )
+        return False
+    return True
+
+
 def _ask_yt_inclusion() -> bool:
     """Decide whether to enqueue the YouTube bootstrap task on this init.
 
@@ -8172,6 +8390,7 @@ def _persist_init_source_enabled_flags(
     include_xhs: bool,
     include_dy: bool,
     include_yt: bool,
+    include_tiktok: bool = False,
     include_x: bool = False,
     include_zhihu: bool = False,
     include_reddit: bool = False,
@@ -8209,6 +8428,10 @@ def _persist_init_source_enabled_flags(
             changed = True
         if bool(getattr(cfg.sources.youtube, "enabled", False)) != include_yt:
             cfg.sources.youtube.enabled = include_yt
+            changed = True
+        tiktok_cfg = getattr(cfg.sources, "tiktok", None)
+        if tiktok_cfg is not None and bool(getattr(tiktok_cfg, "enabled", False)) != include_tiktok:
+            tiktok_cfg.enabled = include_tiktok
             changed = True
         twitter_cfg = getattr(cfg.sources, "twitter", None)
         if twitter_cfg is not None and bool(getattr(twitter_cfg, "enabled", False)) != include_x:
@@ -8426,6 +8649,7 @@ def _format_source_shares(shares: Mapping[str, int]) -> str:
         "xiaohongshu": "小红书",
         "douyin": "抖音",
         "youtube": "YouTube",
+        "tiktok": "TikTok",
     }
     return ", ".join(f"{labels.get(source, source)}={share}" for source, share in shares.items())
 
@@ -8548,6 +8772,9 @@ class InitResult:
     instagram_events: list[dict[str, Any]] = field(default_factory=list)
     instagram_scope_counts: dict[str, Any] = field(default_factory=dict)
     instagram_status: str = "skipped"
+    tiktok_events: list[dict[str, Any]] = field(default_factory=list)
+    tiktok_scope_counts: dict[str, Any] = field(default_factory=dict)
+    tiktok_status: str = "skipped"
 
 
 class GuidedInitError(Exception):
@@ -9064,6 +9291,7 @@ async def run_guided_init(
     include_xhs: bool,
     include_dy: bool,
     include_yt: bool,
+    include_tiktok: bool = False,
     include_x: bool = False,
     include_zhihu: bool = False,
     include_reddit: bool = False,
@@ -9205,6 +9433,7 @@ async def run_guided_init(
             include_xhs,
             include_dy,
             include_yt,
+            include_tiktok,
             include_x,
             include_zhihu,
             include_reddit,
@@ -9498,6 +9727,7 @@ async def run_guided_init(
                 include_xhs,
                 include_dy,
                 include_yt,
+                include_tiktok,
                 include_x,
                 include_zhihu,
                 include_reddit,
@@ -9892,6 +10122,56 @@ async def run_guided_init(
     elif instagram_status == "failed":
         console.print("  [yellow]Instagram 任务失败 —— 检查扩展日志后重试。[/yellow]")
 
+    # TikTok uses a background task tab; serialize with the other sources
+    # to respect the shared browser-task mutex.
+    tiktok_task_id = (
+        (await _enqueue_register_kick(_enqueue_tiktok_bootstrap_task, "tiktok"))
+        if include_tiktok
+        else None
+    )
+    if tiktok_task_id:
+        console.print(
+            "  [dim]已请求扩展拉 TikTok 点赞 / 收藏 / 关注"
+            "(后台标签页顺序读取，最多等待约 8 分钟)。[/dim]"
+        )
+    if include_tiktok:
+        await _stage1_begin_source("TikTok", wait_hint="扩展未响应会在约 8 分钟后自动跳过")
+    if include_tiktok:
+        tiktok_events, tiktok_scope_counts, tiktok_status = await _run_extension_collector(
+            _collect_tiktok_bootstrap_events,
+            tiktok_task_id,
+            label="TikTok",
+            env_name="OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS",
+            default_wait_seconds=_DEFAULT_TIKTOK_BOOTSTRAP_WAIT_SECONDS,
+        )
+    else:
+        tiktok_events, tiktok_scope_counts, tiktok_status = [], {}, "skipped"
+    if include_tiktok:
+        _stage1_finish_source()
+    if tiktok_status == "ok":
+        console.print(
+            "  TikTok "
+            f"点赞 [green]{tiktok_scope_counts.get('tt_like', 0)}[/green] 条"
+            f" / 收藏 [green]{tiktok_scope_counts.get('tt_collect', 0)}[/green] 个"
+            f" / 关注 [green]{tiktok_scope_counts.get('tt_follow', 0)}[/green] 人"
+        )
+    elif tiktok_status == "degraded":
+        console.print(
+            "  [yellow]TikTok 已导入部分信号，但至少一个范围未完成分页；"
+            "本次结果按不完整处理，请检查扩展日志后重试。[/yellow]"
+        )
+    elif tiktok_status == "empty":
+        console.print(
+            "  [yellow]TikTok 任务跑通但 0 条 videos —— 已确认登录且目标列表为空。[/yellow]"
+        )
+    elif tiktok_status == "timeout":
+        console.print(
+            "  [dim]TikTok 初始化信号未导入:扩展未连接或任务仍在后台跑。"
+            "可通过 OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS 调整等待。[/dim]"
+        )
+    elif tiktok_status == "failed":
+        console.print("  [yellow]TikTok 任务失败 —— 检查扩展日志,或重试 init。[/yellow]")
+
     linuxdo_task_id = (
         (
             await _enqueue_register_kick(
@@ -10092,6 +10372,7 @@ async def run_guided_init(
                 "linuxdo": linuxdo_status,
                 "v2ex": v2ex_status,
                 "weibo": weibo_status,
+                "tiktok": tiktok_status,
             },
         )
     except Exception:
@@ -10145,6 +10426,7 @@ async def run_guided_init(
     events.extend(xhs_events)
     events.extend(dy_events)
     events.extend(yt_events)
+    events.extend(tiktok_events)
     events.extend(zhihu_events)
     events.extend(reddit_events)
     events.extend(bangumi_events)
@@ -10185,6 +10467,7 @@ async def run_guided_init(
                 "xiaohongshu": len(xhs_events),
                 "douyin": len(dy_events),
                 "youtube": len(yt_events),
+                "tiktok": len(tiktok_events),
                 "twitter": x_event_count,
                 "zhihu": len(zhihu_events),
                 "reddit": len(reddit_events),
@@ -10215,6 +10498,7 @@ async def run_guided_init(
             await memory.propagate_event(event)
     stage1_degraded = (
         dy_status == "degraded"
+        or tiktok_status == "degraded"
         or linuxdo_status == "degraded"
         or instagram_status
         in {"partial", "login_required", "challenge", "rate_limited", "failed", "timeout"}
@@ -10226,6 +10510,8 @@ async def run_guided_init(
         reason=(
             "douyin_degraded"
             if dy_status == "degraded"
+            else "tiktok_degraded"
+            if tiktok_status == "degraded"
             else "linuxdo_degraded"
             if linuxdo_status == "degraded"
             else "github_partial"
@@ -10442,6 +10728,8 @@ async def run_guided_init(
         combined_history.extend(_dy_events_to_history_items(dy_events))
     if yt_events:
         combined_history.extend(_yt_events_to_history_items(yt_events))
+    if tiktok_events:
+        combined_history.extend(_tiktok_events_to_history_items(tiktok_events))
     if zhihu_events:
         combined_history.extend(_zhihu_events_to_history_items(zhihu_events))
     if reddit_events:
@@ -10705,6 +10993,9 @@ async def run_guided_init(
         instagram_events=instagram_events,
         instagram_scope_counts=instagram_scope_counts,
         instagram_status=instagram_status,
+        tiktok_events=tiktok_events,
+        tiktok_scope_counts=tiktok_scope_counts,
+        tiktok_status=tiktok_status,
     )
 
 
@@ -10744,6 +11035,16 @@ def init(
         False,
         "--yes-youtube",
         help="跳过 YouTube 的 y/n 提问,直接启用(适合脚本化场景)。",
+    ),
+    no_tiktok: bool = typer.Option(
+        False,
+        "--no-tiktok",
+        help="跳过 TikTok 数据接入(默认非交互模式下就是跳过)。",
+    ),
+    skip_tiktok_prompt: bool = typer.Option(
+        False,
+        "--yes-tiktok",
+        help="跳过 TikTok 的 y/n 提问,直接启用(适合脚本化场景)。",
     ),
     no_x: bool = typer.Option(
         False,
@@ -11069,6 +11370,19 @@ def init(
         include_yt = True
     else:
         include_yt = _ask_yt_inclusion()
+
+    # Same resolution order for the TikTok opt-in. Default is
+    # off-in-non-interactive (see _ask_tiktok_inclusion docstring).
+    if no_tiktok:
+        include_tiktok = False
+        console.print("[dim]  跳过 TikTok 数据接入(命令行 --no-tiktok)。[/dim]")
+    elif os.environ.get("OPENBILICLAW_NO_TIKTOK", "").strip() == "1":
+        include_tiktok = False
+        console.print("[dim]  跳过 TikTok 数据接入(OPENBILICLAW_NO_TIKTOK=1)。[/dim]")
+    elif skip_tiktok_prompt:
+        include_tiktok = True
+    else:
+        include_tiktok = _ask_tiktok_inclusion()
 
     # X (Twitter) is server-side cookie replay — no init bootstrap task, so this
     # only flips [sources.twitter].enabled; the producer fetches later once the
@@ -11462,6 +11776,7 @@ def init(
         include_xhs=include_xhs,
         include_dy=include_dy,
         include_yt=include_yt,
+        include_tiktok=include_tiktok,
         include_x=include_x,
         include_zhihu=include_zhihu,
         include_reddit=include_reddit,
@@ -11506,6 +11821,7 @@ def init(
                 include_xhs=include_xhs,
                 include_dy=include_dy,
                 include_yt=include_yt,
+                include_tiktok=include_tiktok,
                 include_x=include_x,
                 include_zhihu=include_zhihu,
                 include_reddit=include_reddit,
@@ -11577,13 +11893,18 @@ def init(
     instagram_events = list(getattr(result, "instagram_events", []))
     instagram_scope_counts = dict(getattr(result, "instagram_scope_counts", {}))
     instagram_status = str(getattr(result, "instagram_status", "skipped"))
+    tiktok_events = list(getattr(result, "tiktok_events", []))
+    tiktok_scope_counts = dict(getattr(result, "tiktok_scope_counts", {}))
+    tiktok_status = str(getattr(result, "tiktok_status", "skipped"))
     discovered_count = result.discovered_count
     discovery_error = result.discovery_error
     dy_degraded = dy_status == "degraded"
+    tiktok_degraded = tiktok_status == "degraded"
     linuxdo_degraded = linuxdo_status == "degraded"
     partial_success = (
         discovery_error
         or dy_degraded
+        or tiktok_degraded
         or linuxdo_degraded
         or github_status == "partial"
         or v2ex_status == "partial"
@@ -11610,6 +11931,13 @@ def init(
             "warning",
             "抖音采集部分完成",
             "dy_status=degraded：已采到的抖音事件仍已用于画像建模，"
+            "但至少一个范围未能证明分页完整；请检查扩展日志后重试补齐。",
+        )
+    if tiktok_degraded:
+        _print_status_panel(
+            "warning",
+            "TikTok 采集部分完成",
+            "tiktok_status=degraded：已采到的 TikTok 事件仍已用于画像建模，"
             "但至少一个范围未能证明分页完整；请检查扩展日志后重试补齐。",
         )
     if linuxdo_degraded:
@@ -11685,6 +12013,10 @@ def init(
     yt_history_count = int(yt_scope_counts.get("yt_history", 0))
     yt_subs_count = int(yt_scope_counts.get("yt_subscriptions", 0))
     yt_likes_count = int(yt_scope_counts.get("yt_likes", 0))
+    tiktok_like = int(tiktok_scope_counts.get("tt_like", 0))
+    tiktok_collect = int(tiktok_scope_counts.get("tt_collect", 0))
+    tiktok_history = int(tiktok_scope_counts.get("tt_history", 0))
+    tiktok_follow = int(tiktok_scope_counts.get("tt_follow", 0))
     zhihu_history_count = int(zhihu_scope_counts.get("zhihu_read_history", 0))
     zhihu_favorite_count = int(zhihu_scope_counts.get("zhihu_collection", 0)) + int(
         zhihu_scope_counts.get("zhihu_activity_favorite", 0)
@@ -11733,6 +12065,15 @@ def init(
         ("▶ YouTube 订阅频道", f"{yt_subs_count} 个"),
         ("▶ YouTube 点赞", f"{yt_likes_count} 个"),
         ("🌐 YouTube 入库事件", f"{len(yt_events)} 条"),
+        ("🎬 TikTok 点赞", f"{tiktok_like} 条"),
+        ("🎬 TikTok 收藏", f"{tiktok_collect} 个"),
+        ("🎬 TikTok 观看历史（可选）", f"{tiktok_history} 条" if tiktok_history else "默认不采集"),
+        ("🎬 TikTok 关注", f"{tiktok_follow} 人"),
+        ("🌐 TikTok 入库事件", f"{len(tiktok_events)} 条"),
+        (
+            "🎬 TikTok 采集状态(tiktok_status)",
+            "部分完成 (degraded)" if tiktok_degraded else tiktok_status,
+        ),
         ("知乎 浏览", f"{zhihu_history_count} 条"),
         ("知乎 收藏", f"{zhihu_favorite_count} 条"),
         ("知乎 点赞", f"{zhihu_like_count} 条"),
@@ -11787,6 +12128,14 @@ def init(
             "[dim]ℹ️  YouTube 0 条信号入库。最常见原因:扩展未装 / 浏览器没登录 "
             "https://www.youtube.com / 任务仍在后台跑。装好扩展后重新跑 "
             "[cyan]openbiliclaw init --yes-youtube[/cyan] 可补齐。[/dim]"
+        )
+    if (
+        tiktok_like + tiktok_collect + tiktok_history + tiktok_follow
+    ) == 0 and tiktok_status != "skipped":
+        console.print(
+            "[dim]ℹ️  TikTok 0 条信号入库。最常见原因:扩展未装 / 浏览器没登录 "
+            "https://www.tiktok.com / 任务仍在后台跑。装好扩展后重新跑 "
+            "[cyan]openbiliclaw init --yes-tiktok[/cyan] 可补齐。[/dim]"
         )
     if (
         zhihu_history_count + zhihu_favorite_count + zhihu_like_count
@@ -14579,6 +14928,7 @@ def keyword_inspiration_dry_run(
         "xiaohongshu",
         "douyin",
         "youtube",
+        "tiktok",
         "twitter",
         "github",
         "zhihu",
@@ -15261,6 +15611,191 @@ def _run_douyin_formal_discovery(*, limit: int) -> None:
             "warning",
             "抖音 discovery 执行失败",
             "请检查后端及扩展日志中的结构化错误。",
+        ),
+    }
+    kind, title, body = messages.get(reason, ("warning", "未知状态", reason or "无详细信息"))
+    _print_status_panel(kind, title, body)
+    if reason not in {"throttled", "pool_full"}:
+        raise typer.Exit(code=1)
+
+
+@app.command("discover-tiktok")
+def discover_tiktok_smoke(
+    mode: str = typer.Option("feed", help="只读取数分支：feed / tag / user / search"),
+    query: str = typer.Option("", help="标签、创作者或搜索词；feed 不需要"),
+    limit: int = typer.Option(5, min=1, max=20, help="最多显示的条目数"),
+) -> None:
+    """Read TikTok metadata with isolated state; never write the user's candidate pool."""
+    import tempfile
+
+    from openbiliclaw.api.runtime_context import _build_tiktok_client
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources.tiktok_auth import resolve_tiktok_cookie
+
+    if mode not in {"feed", "tag", "user", "search"} or (mode != "feed" and not query.strip()):
+        raise typer.BadParameter("mode 必须是 feed/tag/user/search，非 feed 分支需要 --query")
+    cfg = load_config()
+    from openbiliclaw.network import set_outbound_proxy
+
+    set_outbound_proxy(cfg.network.proxy, mode=cfg.network.mode)
+    cookie = resolve_tiktok_cookie(data_dir=cfg.data_path, cookie_env=cfg.sources.tiktok.cookie_env)
+    with tempfile.TemporaryDirectory(prefix="openbiliclaw-tiktok-smoke-") as directory:
+        cfg.data_dir = directory
+        client = _build_tiktok_client(cfg, cfg.sources.tiktok)
+        if client.web is not None:
+            client.web.identity.login_cookie = cookie
+
+        async def run() -> list[Any]:
+            if mode == "feed":
+                rows = await client.get_feed(limit=limit)
+                if rows is None:
+                    raise RuntimeError("TikTok feed unavailable")
+                return list(rows)
+            method = {
+                "tag": client.get_tag_videos,
+                "user": client.get_user_videos,
+                "search": client.search_videos,
+            }[mode]
+            return list(await method(query, limit=limit))
+
+        try:
+            rows = asyncio.run(run())
+        except Exception as exc:
+            console.print(f"TikTok smoke: {getattr(exc, 'reason', type(exc).__name__)}")
+            raise typer.Exit(code=1) from exc
+        console.print(f"TikTok {mode}: fetched={len(rows)}; storage=isolated; candidate_writes=0")
+
+
+def _run_tiktok_discovery(*, limit: int) -> None:
+    """Run the formal TikTok producer without the daemon master switch."""
+    from openbiliclaw.api.runtime_context import build_tiktok_discovery_producer
+    from openbiliclaw.config import load_config
+    from openbiliclaw.discovery.engine import DiscoveryConcurrencyController
+    from openbiliclaw.llm.concurrency import background_llm_concurrency
+    from openbiliclaw.llm.service import LLMService, module_overrides_from_config
+    from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+    from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+
+    _require_runtime_config()
+    config = load_config()
+    tt_cfg = getattr(getattr(config, "sources", None), "tiktok", None)
+    if tt_cfg is None or not bool(getattr(tt_cfg, "enabled", False)):
+        _print_status_panel(
+            "warning",
+            "TikTok discovery 未启用",
+            "请在配置页或 config.toml 中启用 [sources.tiktok].enabled。",
+        )
+        raise typer.Exit(code=1)
+
+    database = _get_runtime_database()
+    if not hasattr(database, "conn"):
+        _print_status_panel("warning", "TikTok 任务表不可用", "当前数据库不支持 tiktok 运行台账。")
+        raise typer.Exit(code=1)
+
+    soul_engine = _build_soul_engine()
+    try:
+        asyncio.run(soul_engine.get_profile())
+    except SoulProfileNotInitializedError as exc:
+        _print_status_panel(
+            "warning",
+            "尚未初始化用户画像",
+            "请先执行 `openbiliclaw init` 拉取历史并生成初始画像。",
+        )
+        raise typer.Exit(code=1) from exc
+
+    discovery_engine = _build_discovery_engine()
+    candidate_pipeline = _build_discovery_candidate_pipeline(
+        config=config,
+        database=database,
+        discovery_engine=discovery_engine,
+    )
+    keyword_fetch = KeywordFetchCoordinator(
+        database=database,
+        discovery_config=config.discovery,
+    )
+    llm_service = LLMService(
+        registry=_build_registry(),
+        memory=_build_memory_manager(),
+        usage_recorder=_build_usage_recorder(),
+        module_overrides=module_overrides_from_config(config),
+        concurrency=config.llm.concurrency,
+        concurrency_gate=_build_llm_concurrency_gate(),
+    )
+    concurrency = DiscoveryConcurrencyController(
+        bilibili_request_concurrency=2,
+        llm_evaluation_concurrency=background_llm_concurrency(config.llm.concurrency),
+    )
+    producer = build_tiktok_discovery_producer(
+        config=config,
+        database=database,
+        soul_engine=soul_engine,
+        discovery_engine=discovery_engine,
+        llm_service=llm_service,
+        concurrency=concurrency,
+        candidate_pipeline=candidate_pipeline,
+        keyword_fetch=keyword_fetch,
+        # Manual discover is source-scoped and must not inherit the daemon's
+        # scheduler master switch.
+        enabled_override=True,
+    )
+    if producer is None:
+        _print_status_panel(
+            "warning",
+            "TikTok discovery producer 未启动",
+            "请确认 TikTok 来源已启用且数据库可用。",
+        )
+        raise typer.Exit(code=1)
+
+    result = asyncio.run(producer.produce_if_due(limit=limit))
+    reason = str(result.get("reason", ""))
+    discovered = int(cast("int | float | str | bool", result.get("discovered", 0)) or 0)
+    enqueued = int(cast("int | float | str | bool", result.get("enqueued", 0)) or 0)
+    source_counts_raw = result.get("source_counts", {})
+    source_counts = source_counts_raw if isinstance(source_counts_raw, dict) else {}
+    source_counts_text = ", ".join(
+        f"{source}:{count}" for source, count in sorted(source_counts.items())
+    )
+
+    _print_page_title("TikTok 内容发现", "正式 producer · unified keywords · candidate pipeline")
+    if reason in {"ok", "empty", "degraded"}:
+        if reason == "degraded":
+            console.print("  [yellow]部分 TikTok 分支失败，已保留成功候选；详见后端日志。[/yellow]")
+        _print_key_value_table(
+            "发现摘要",
+            [
+                ("发现条数", str(discovered)),
+                ("入池候选", str(enqueued)),
+                ("来源", "tiktok"),
+                ("来源分布", source_counts_text or "（无）"),
+            ],
+        )
+        if reason == "empty" or discovered <= 0:
+            console.print("  [dim]本轮分支正常完成，但没有产生新候选。[/dim]")
+            return
+        for index, item in enumerate(candidate_pipeline.last_admitted_items[:5], start=1):
+            _print_discovered_content_preview(item, index)
+        return
+
+    messages = {
+        "rate_limited": ("warning", "TikTok 暂时限流", "共享冷却期结束后会自动恢复。"),
+        "no_keywords": ("info", "暂无待执行关键词", "等待关键词规划器补充。"),
+        "disabled": ("info", "TikTok discovery 已禁用", "请启用 TikTok 来源后重试。"),
+        "throttled": (
+            "info",
+            "距离上次 TikTok discovery 不足最小调度间隔",
+            "可在配置页调整 TikTok 最小调度间隔分钟数。",
+        ),
+        "pool_full": ("info", "候选池已满", "当前无需继续补充 TikTok 候选。"),
+        "no_profile": ("warning", "尚未初始化 Soul 画像", "请先执行 `openbiliclaw init`。"),
+        "budget_exhausted": (
+            "warning",
+            "TikTok discovery 分支预算已耗尽",
+            "请调整对应 daily_*_budget 或等待 UTC 日预算重置。",
+        ),
+        "error": (
+            "warning",
+            "TikTok discovery 执行失败",
+            "请检查后端日志中的结构化错误。",
         ),
     }
     kind, title, body = messages.get(reason, ("warning", "未知状态", reason or "无详细信息"))
@@ -16714,7 +17249,7 @@ def discover(
         "--source",
         "-s",
         help=(
-            "触发发现的内容源：bilibili、xiaohongshu、douyin、zhihu、reddit、"
+            "触发发现的内容源：bilibili、xiaohongshu、douyin、tiktok、zhihu、reddit、"
             "bangumi、github（别名 gh）、linuxdo、v2ex、weibo 或 instagram。"
         ),
         case_sensitive=False,
@@ -16752,6 +17287,16 @@ def discover(
                 "douyin 渠道走正式 producer，已忽略策略过滤。",
             )
         _run_douyin_formal_discovery(limit=limit)
+        return
+
+    if source_normalized == "tiktok":
+        if strategies:
+            _print_status_panel(
+                "info",
+                "--strategy 仅对 Bilibili 生效",
+                "tiktok 渠道走正式 producer，已忽略策略过滤。",
+            )
+        _run_tiktok_discovery(limit=limit)
         return
 
     if source_normalized == "zhihu":
@@ -16838,7 +17383,7 @@ def discover(
     if source_normalized != "bilibili":
         raise typer.BadParameter(
             f"未知的内容源 `{source}`，当前支持："
-            "bilibili、xiaohongshu、douyin、zhihu、reddit、bangumi、github（gh）、"
+            "bilibili、xiaohongshu、douyin、tiktok、zhihu、reddit、bangumi、github（gh）、"
             "linuxdo、v2ex、weibo、instagram。"
         )
 

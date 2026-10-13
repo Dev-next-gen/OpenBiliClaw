@@ -931,6 +931,7 @@ class SourcesStatusResponse(BaseModel):
     xiaohongshu: SourceStatusItem = Field(default_factory=SourceStatusItem)
     douyin: SourceStatusItem = Field(default_factory=SourceStatusItem)
     youtube: SourceStatusItem = Field(default_factory=SourceStatusItem)
+    tiktok: SourceStatusItem = Field(default_factory=SourceStatusItem)
     twitter: SourceStatusItem = Field(default_factory=SourceStatusItem)
     zhihu: SourceStatusItem = Field(default_factory=SourceStatusItem)
     reddit: SourceStatusItem = Field(default_factory=SourceStatusItem)
@@ -1106,6 +1107,7 @@ class SourcesCredentialsResponse(BaseModel):
     xiaohongshu: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     douyin: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     youtube: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
+    tiktok: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     twitter: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     zhihu: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
     reddit: SourceCredentialItem = Field(default_factory=SourceCredentialItem)
@@ -1349,6 +1351,7 @@ ExtensionNativeSaveE2EPlatform = Literal[
     "twitter",
     "zhihu",
     "reddit",
+    "tiktok",
 ]
 _EXTENSION_NATIVE_SAVE_E2E_TARGETS: dict[str, dict[NativeSaveActionOut, str]] = {
     "youtube": {"favorite": "OpenBiliClaw", "watch_later": "YouTube Watch Later"},
@@ -1357,6 +1360,7 @@ _EXTENSION_NATIVE_SAVE_E2E_TARGETS: dict[str, dict[NativeSaveActionOut, str]] = 
     "twitter": {"favorite": "X Bookmarks", "watch_later": "X Bookmarks"},
     "zhihu": {"favorite": "知乎收藏", "watch_later": "知乎收藏"},
     "reddit": {"favorite": "Reddit Saved", "watch_later": "Reddit Saved"},
+    "tiktok": {"favorite": "TikTok Favorites", "watch_later": "TikTok Favorites"},
 }
 _EXTENSION_NATIVE_SAVE_E2E_CONTENT_IDS: dict[str, re.Pattern[str]] = {
     "youtube": re.compile(r"[A-Za-z0-9_-]{11}"),
@@ -1365,6 +1369,7 @@ _EXTENSION_NATIVE_SAVE_E2E_CONTENT_IDS: dict[str, re.Pattern[str]] = {
     "twitter": re.compile(r"[0-9]{5,30}"),
     "zhihu": re.compile(r"(?:question|answer|article):[0-9]+"),
     "reddit": re.compile(r"t[13]_[a-z0-9]+"),
+    "tiktok": re.compile(r"[0-9]{6,30}"),
 }
 _EXTENSION_NATIVE_SAVE_E2E_ERROR_CODES: dict[NativeSaveStatusOut, frozenset[str]] = {
     "pending": frozenset({""}),
@@ -2386,6 +2391,27 @@ class YoutubeSourceConfigOut(SourceDatePreferenceOut):
     min_interval_minutes: int = 3
 
 
+class TiktokSourceConfigOut(SourceDatePreferenceOut):
+    enabled: bool = False
+    incremental_enabled: bool = False
+    mode: str = "auto"
+    # Resolved optional login Cookie header (env override, else
+    # data/tiktok_cookie.json); masked on the way out. Guest identity is a
+    # legitimate mode, so an empty cookie is not an error state.
+    cookie: str = ""
+    cookie_env: str = "OPENBILICLAW_TIKTOK_COOKIE"
+    region: str = "JP"
+    tz_name: str = "Asia/Tokyo"
+    tags: list[str] = Field(default_factory=list)
+    creators: list[str] = Field(default_factory=list)
+    daily_feed_budget: int = 3
+    daily_search_budget: int = 3
+    daily_tag_budget: int = 0
+    daily_user_budget: int = 0
+    request_interval_seconds: int = 2
+    min_interval_minutes: int = 3
+
+
 class TwitterSourceConfigOut(SourceDatePreferenceOut):
     enabled: bool = False
     mode: str = "cookie"
@@ -2538,6 +2564,7 @@ class SourcesConfigOut(BaseModel):
     xiaohongshu: XiaohongshuSourceConfigOut = Field(default_factory=XiaohongshuSourceConfigOut)
     douyin: DouyinSourceConfigOut = Field(default_factory=DouyinSourceConfigOut)
     youtube: YoutubeSourceConfigOut = Field(default_factory=YoutubeSourceConfigOut)
+    tiktok: TiktokSourceConfigOut = Field(default_factory=TiktokSourceConfigOut)
     twitter: TwitterSourceConfigOut = Field(default_factory=TwitterSourceConfigOut)
     zhihu: ZhihuSourceConfigOut = Field(default_factory=ZhihuSourceConfigOut)
     reddit: RedditSourceConfigOut = Field(default_factory=RedditSourceConfigOut)
@@ -2569,6 +2596,7 @@ class SchedulerConfigOut(BaseModel):
     reddit_incremental_hours: int | None = None
     linuxdo_incremental_hours: int | None = None
     v2ex_incremental_hours: int | None = None
+    tiktok_incremental_hours: int | None = None
     refresh_check_interval_seconds: int = 60
     eval_min_batch_size: int = Field(default=15, ge=1, le=90)
     eval_max_wait_seconds: float = Field(default=90.0, ge=0.0, le=600.0)

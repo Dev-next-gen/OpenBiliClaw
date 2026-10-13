@@ -1006,9 +1006,33 @@ def notarize_macos_artifact(
 
 
 def staple_macos_artifact(artifact: Path) -> None:
-    """Attach and validate the notarization ticket for offline installation."""
-    subprocess.check_call(["xcrun", "stapler", "staple", str(artifact)])
-    subprocess.check_call(["xcrun", "stapler", "validate", str(artifact)])
+    """Attach and validate the notarization ticket for offline installation.
+
+    Apple's ticket-delivery endpoint intermittently drops connections on CI
+    runners (stapler exit 68 after CloudKit -1005 errors, seen 2026-10-13 on
+    three consecutive v0.3.228 x64 builds while notarization itself was
+    Accepted), so both stapler calls retry like the hdiutil create path.
+    """
+    for action in ("staple", "validate"):
+        import time
+
+        cmd = ["xcrun", "stapler", action, str(artifact)]
+        last_err = ""
+        for attempt in range(1, 4):
+            result = subprocess.run(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True
+            )
+            if result.returncode == 0:
+                last_err = ""
+                break
+            last_err = (result.stderr or "").strip()
+            print(
+                f"[build] stapler {action} failed "
+                f"(attempt {attempt}/3, rc={result.returncode}): {last_err}"
+            )
+            time.sleep(10 * attempt)
+        if last_err:
+            raise subprocess.CalledProcessError(1, cmd, stderr=last_err)
 
 
 def notarize_macos_app(
