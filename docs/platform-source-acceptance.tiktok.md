@@ -1,5 +1,27 @@
 # TikTok 来源验收报告
 
+## 2026-10-14 全面复核：发现推荐可交付，完整账号能力保留缺口
+
+本轮范围 **audit-only**，受测提交 `41fb9e06be1dc8150808ed25f90c827bec10bec2`。用户明确暂缓站内收藏；本轮没有任何 TikTok 收藏、点赞或关注写入，上一轮收藏持久化失败仍保留，不能改写为 PASS 或能力 N/A。观看历史沿用此前用户确认的可选范围。此前等待手机 App 收藏对照的请求不再阻塞本轮独立验收。
+
+**结论：TikTok 的发现→评估→推荐及桌面/手机消费面可以作为首版交付；full contract 总体仍为 incremental only。** 本轮没有发现新的主要实现故障，但不能把缺少非空账号证据当成已通过。画像、周期增量与 Firefox 安装验证的限制如下；尚未合并或发布。
+
+| 验收项 | 结果与证据范围 |
+| --- | --- |
+| 最新受测提交全量 CI | 四项 SUCCESS：[run 38435896568](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/38435896568)，后端 10316 passed / 131 skipped；包括 Windows 自启动、Firefox smoke build、引导初始化浏览器检查。后续文档提交的 CI 应独立查询。 |
+| 本地后端与代理/账号回归 | TikTok、bootstrap、周期同步、代理隔离等 426 passed；手机相关 62 passed；Ruff 通过、MyPy 318 文件通过。需要本机监听的测试在允许监听环境执行。 |
+| 扩展 | 全量 1814 passed / 0 failed；Chrome/Firefox 构建、类型检查及各 22 项资源检查通过。首次受限沙箱执行因本机监听权限失败，放开测试监听后重跑通过。 |
+| 真实发现/模型/推荐 | 沿默认 loader 的实际模型与 system 代理，真实发现 4、评估 4、入池 4、文案 4；embedding 768 维，推荐 API HTTP 200 返回 4 条且 TikTok 身份正确。使用隔离数据库、显式合成 science 兴趣与 ASGI API transport，不冒充真实账号画像或本轮正常 TCP 后端 E2E。 |
+| 桌面与手机展示 | 当前源码渲染本轮真实 DTO，封面经过真实下载路径。桌面 1440×1000 和手机视口 390×844 各展示 4 条，TikTok 标签、互动数据、4/4 封面正常，无横向溢出；桌面来源筛选选中，手机打开按钮新页指向对应 TikTok HTTPS 视频。fixture 不提供实时 WebSocket，重连错误不算正式后端故障，也不算实时流已验收；未用 fixture 写响应证明保存成功。 |
+| 登录与账号列表 | 沿用同日已安装正式包的真实证据：会话验证成功，喜欢/收藏/关注三范围明确 empty/complete。与 10 月 10 日的真实 Cookie 同步/登录搜索证据合并判断；本轮没有新凭据或上游写入。 |
+| 画像与周期增量 | 实现、调度接线、双重 opt-in、跨轮去重和非空 fixture 回归通过；真实账号没有可用非空信号，因此真实模型画像与后续非空增量仍未验收，生产周期同步没有开启。 |
+| Firefox | 构建及 CI smoke 通过；安装后真实账号流程 NOT_RUN。 |
+| 站内收藏 | 用户暂缓本次门禁；上轮实际失败保持为已知限制，不能宣称已修复。 |
+
+来源审计 **46 PASS / 14 MANUAL / 2 N/A / 0 MISSING** 仅证明注册齐全；14 个 MANUAL 是语义/真实环境核对提示，不等于 14 个新 bug，也不自动证明 full contract 通过。其余真实证据与失败历史保留在下文。
+
+[本轮脱敏汇总](testing/assets/2026-10-14-tiktok-acceptance/acceptance.json)、[真实管线结果](testing/assets/2026-10-14-tiktok-acceptance/pipeline.json)、[桌面截图](testing/assets/2026-10-14-tiktok-acceptance/desktop.png)、[手机截图](testing/assets/2026-10-14-tiktok-acceptance/mobile.png)。专用浏览器与展示服务验收后关闭；生产配置、数据及已安装插件没有变动。本轮只补验收文档，无接口、模块、配置、安装流程或架构变化。PR #286 仍叠在 #275 上，合并顺序为 #275 → #286；不以本报告替代合并后检查或发布验证。
+
 ## 2026-10-14 正式修复包热加载与输入方式对照
 
 修复前最后一个实际安装包没有请求完成等待补丁。本轮使用既有本地 `POST /api/extension/reload`：在正常 `create_app` 隔离后端确认扩展连接，核对注册目录的 manifest 与修复分支完全一致、保留其已有未提交改动，只更新重新构建后不同的 TikTok bundle、source map 和类型声明。reload 返回 delivered=true，扩展重连 presence=1。此后正式 native-save 通过新建任务页加载本轮构建，返回 **failed / native_confirmation_not_observed**；前文「时序修复未热加载」的当前状态至此解除，但持久化仍未通过。
