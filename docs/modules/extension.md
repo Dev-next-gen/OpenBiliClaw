@@ -929,3 +929,14 @@ TikTok 每 scope 的基础预算由 30 秒调整为 60 秒，覆盖新增渲染�
 四列表真实复查仍出现喜欢已完成、下一 scope idle 超时，暴露原先把 `tabs.sendMessage` resolve 等同于执行接收的缺口。`TIKTOK_SCOPE_EXECUTE` 现在回复 `{accepted, task_id, scope}`：content 先持久化记录和 session 恢复指针，再允许肯定 ACK；重复同任务/同 scope 仅在可恢复后 ACK，忙于其它 scope 或存储失败拒绝接收。`executeTiktokScopeOnce(data, onAccepted?)` 新增可选回调。
 
 后台每次接收 ACK 最多等待 1 秒，缺失/错误 scope/否定/断开的 ACK 都沿原 20 秒投递预算重试同一只读 scope；正向 ACK 必须与任务和 scope 同时匹配。重试不扩展 idle/absolute deadline，不重放 native save。该改动补齐现有 dispatcher↔content 通道的接收边界，后端 wire、浏览器权限与配置不变；真实连续任务结果见[台账](../platform-source-acceptance.tiktok.md)。
+
+
+### TikTok 收藏请求完成观察（2026-10-13）
+
+| 已实现行为 | 验证边界 |
+| --- | --- |
+| 先观察再点击 | `TiktokNativeSaveEnvironment.watchFavoriteRequest(contentId)` 返回 `TiktokFavoriteRequestWatch`（`isComplete()` / `dispose()`）或 null；浏览器不支持观察时不执行写入。 |
+| 乐观 UI 不提前刷新 | 原生按钮已变金色仍须等待网页自身请求完成；只匹配同源 `/api/item/collect/`、`action=1`、精确 `itemId`、本次观察后的 fetch/XHR Resource Timing。不读取 Cookie 或响应体，不构造请求。 |
+| 完成与保存分开确认 | 观察请求完成不是证明服务端保存；runner 仍必须刷新并从新文档只读确认。未完成最多等待原有 100 轮/100ms 确认预算，未确认不报成功；所有退出路径释放观察器。 |
+
+只增加 content 内部环境接口，不改变后台 wire、权限、配置或跨模块架构。回归覆盖请求未完成时不刷新、旧请求/其他视频/取消收藏/异源请求不计入，以及观察器清理。实机人工点击等待响应后仍不保留收藏，详见 [TikTok 验收](../platform-source-acceptance.tiktok.md)。

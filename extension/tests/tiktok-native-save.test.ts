@@ -68,6 +68,7 @@ function fixture(options: {
         : (options.rateBefore ?? ""),
     findFavoriteControls: () =>
       Array.from({ length: options.controls ?? 1 }, () => control),
+    watchFavoriteRequest: () => ({ isComplete: () => true, dispose() {} }),
     sleep: async () => {
       env.sleeps += 1;
     },
@@ -108,6 +109,95 @@ test("saveTiktok clicks the favorite control and confirms the checked state", as
   const env = fixture();
   assert.deepEqual(await saveTiktok(task, env), { status: "synced" });
   assert.equal(env.clicks, 1);
+});
+
+test("optimistic bookmark must not release the runner to reload an in-flight favorite", async () => {
+  const env = fixture();
+  let disposed = false;
+  const watchedEnv = {
+    ...env,
+    watchFavoriteRequest: () => ({
+      isComplete: () => env.sleeps >= 4,
+      dispose: () => { disposed = true; },
+    }),
+  };
+  // The page turns gold synchronously, while its native request takes 400 ms.
+  // Returning here lets the runner reload and abort that pending request.
+  assert.deepEqual(await saveTiktok(task, watchedEnv), { status: "synced" });
+  assert.equal(env.sleeps, 4);
+  assert.equal(disposed, true);
+  assert.equal(env.clicks, 1);
+});
+
+test("an unobservable request prevents mutation; an unfinished request never confirms success", async () => {
+  const unavailable = fixture();
+  unavailable.watchFavoriteRequest = () => null;
+  assert.deepEqual(await saveTiktok(task, unavailable), { status: "failed", error_code: "native_save_failed" });
+  assert.equal(unavailable.clicks, 0);
+  const pending = fixture();
+  let disposed = false;
+  pending.watchFavoriteRequest = () => ({ isComplete: () => false, dispose: () => { disposed = true; } });
+  assert.deepEqual(await saveTiktok(task, pending), { status: "failed", error_code: "native_confirmation_not_observed" });
+  assert.equal(pending.clicks, 1);
+  assert.equal(pending.sleeps, 99);
+  assert.equal(disposed, true);
+});
+
+test("request observer is released when the native click throws", async () => {
+  const env = fixture();
+  let disposed = false;
+  env.watchFavoriteRequest = () => ({ isComplete: () => false, dispose: () => { disposed = true; } });
+  env.findFavoriteControls = () => [{ isSelected: () => false, click() { throw Error("detached"); } }];
+  assert.deepEqual(await saveTiktok(task, env), { status: "failed", error_code: "native_save_failed" });
+  assert.equal(disposed, true);
+});
+
+test("DOM timing watcher accepts only this attempt's exact completed native favorite", () => {
+  let deliver: (entries: PerformanceEntry[]) => void = () => {};
+  let disconnected = false;
+  let queued: PerformanceEntry[] = [];
+  const doc = {
+    defaultView: {
+      performance: { now: () => 100 },
+      PerformanceObserver: class {
+        constructor(callback: PerformanceObserverCallback) {
+          deliver = entries => callback({ getEntries: () => entries } as PerformanceObserverEntryList, this as unknown as PerformanceObserver);
+        }
+        observe(options: PerformanceObserverInit) { assert.deepEqual(options, { type: "resource", buffered: false }); }
+        takeRecords() { const result = queued; queued = []; return result; }
+        disconnect() { disconnected = true; }
+      },
+    },
+  } as unknown as Document;
+  const env = createTiktokBrowserEnvironment(doc, task.content_url);
+  const entry = {
+    entryType: "resource", startTime: 101, responseEnd: 444, initiatorType: "fetch",
+    name: `https://www.tiktok.com/api/item/collect/?action=1&itemId=${CONTENT_ID}`,
+  } as PerformanceResourceTiming;
+  const watcher = env.watchFavoriteRequest(CONTENT_ID)!;
+  for (const candidate of [
+    { ...entry, startTime: 99 }, { ...entry, responseEnd: 0 },
+    { ...entry, initiatorType: "img" }, { ...entry, entryType: "navigation" },
+    { ...entry, name: entry.name.replace("action=1", "action=0") },
+    { ...entry, name: entry.name.replace(CONTENT_ID, "999999999") },
+    { ...entry, name: entry.name.replace("www.tiktok.com", "other.tiktok.com") },
+    { ...entry, name: entry.name.replace("item/collect", "user/collection_list") },
+    { ...entry, name: "not a URL" },
+  ]) {
+    deliver([candidate]);
+    assert.equal(watcher.isComplete(), false);
+  }
+  // Completion can be queued before the observer callback runs.
+  queued = [entry];
+  assert.equal(watcher.isComplete(), true);
+  watcher.dispose();
+  assert.equal(disconnected, true);
+  const xhrWatcher = env.watchFavoriteRequest(CONTENT_ID)!;
+  deliver([{ ...entry, initiatorType: "xmlhttprequest" }]);
+  assert.equal(xhrWatcher.isComplete(), true);
+  xhrWatcher.dispose();
+  assert.equal(env.watchFavoriteRequest("999999999"), null);
+  assert.equal(createTiktokBrowserEnvironment({} as Document, task.content_url).watchFavoriteRequest(CONTENT_ID), null);
 });
 
 test("saveTiktok reports already_synced for a repeat favorite without clicking", async () => {

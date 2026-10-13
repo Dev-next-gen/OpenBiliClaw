@@ -1,5 +1,15 @@
 # TikTok 来源验收报告
 
+## 2026-10-13 原生收藏请求完成时序修复
+
+范围 `capability-increment`，基线 `8070c731`。OpenCLI 真实浏览器对照中，当前轮多次（4 次）授权 UI 点击均先确认目标未收藏，未执行取消收藏或 API 重放；最终一次捕获的原生 `/api/item/collect/` POST 确认为目标视频、`action=1`、HTTP 200、`status_code/statusCode=0`，约 343ms 完成，无错误文案。关闭公约更新通知后仍一样：等待 3 秒，再真正刷新，新文档 complete 后书签仍白色。原生持久化继续 **FAIL**，不能归因于合成点击、通知弹层或 Intel CPU，也不能把成功响应作为账号收藏证明。
+
+发现独立的插件时序缺陷：按钮先乐观变金色，content 立即返回，runner 可能在网页请求尚未完成时刷新。先添加回归，得到 **FAIL（0 次等待，预期 4 次）**；修复后点击前启动只读 Resource Timing observer，等待同源、同视频、`action=1` 的新请求完成，再交由既有的新文档只读确认。观察不到完成仍有界失败，观察器不可用则不点击。新增完整 content→runner 测试确认请求未完成时不会刷新，并保留刷新后持久化证明；没有用任意固定延迟或 HTTP 200 代替成功条件。
+
+验证：相关扩展 **61 passed**；全量扩展 **1814 passed**；选定 TikTok/Instagram 契约、native-save 与文档后端套件 **347 passed**，其余 5 个代理回归先因沙箱禁止监听失败，在允许本机监听后 **5 passed**。Chrome/Firefox 构建、资源检查、TypeScript、Ruff、MyPy（318 文件）通过。没有重跑全量 pytest，没有宣称非空画像或真实周期增量通过。历史入口缺失沿用此前真实观察，本轮未复测；有效的其他 scope 行仍可被画像使用，历史失败本身不等于必须丢弃其他数据。
+
+本轮修复仅构建验证，尚未替换/重新加载用户安装的扩展；不将单元回归冒充更新后的账号 E2E。已真正刷新清除临时页内探针、确认探针不存在、关闭本次 trace 标签并释放两个浏览器 lease。未保存 Cookie、原始响应或账号 DOM。[脱敏证据](testing/assets/2026-10-13-tiktok-native-request/real-e2e.json)。
+
 ## 2026-10-13 代理路由修复与真实点击对照
 
 范围 `capability-increment`，基线 `844485bc`，独立 repair worktree。默认 `system` 路由已存在，但 TikTok 的 curl_cffi 未物化 macOS OS-only 代理；`proxy=""` 被库忽略，direct 仍继承环境代理；custom 又会被环境 NO_PROXY 绕过。本机真实 libcurl → origin/proxy 回归先 **3 failed / 2 passed**，统一适配后 **5 passed**。Web API、登录探针和 TikTok 封面使用同一适配器；封面仍固定已验证公网地址和 TLS。Instagram/TikTok 浏览器任务沿用浏览器代理，未新增权限、改系统代理、切节点或重写用户配置。

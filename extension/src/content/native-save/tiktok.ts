@@ -24,6 +24,12 @@ export interface TiktokSaveControl {
   click(): void;
 }
 
+export interface TiktokFavoriteRequestWatch {
+  /** Completion only; neither HTTP success nor persistence is inferred. */
+  isComplete(): boolean;
+  dispose(): void;
+}
+
 export interface TiktokNativeSaveEnvironment {
   currentUrl: string;
   isLoggedIn(): boolean;
@@ -33,6 +39,8 @@ export interface TiktokNativeSaveEnvironment {
   isContentReady(): boolean;
   rateLimitFingerprint(): string;
   findFavoriteControls(contentId: string): TiktokSaveControl[];
+  /** Observe the page's own request before clicking; never send/replay it. */
+  watchFavoriteRequest(contentId: string): TiktokFavoriteRequestWatch | null;
   sleep(ms: number): Promise<void>;
 }
 
@@ -82,11 +90,12 @@ function hasTargetContract(task: NativeSaveTask): boolean {
 async function confirmSelected(
   task: NativeSaveTask,
   env: TiktokNativeSaveEnvironment,
+  request: TiktokFavoriteRequestWatch,
 ): Promise<boolean> {
   for (let attempt = 0; attempt < CONFIRM_ATTEMPTS; attempt += 1) {
     if (!isSupported(task, env.currentUrl) || !env.isLoggedIn() || env.isUnavailable()) return false;
     const controls = env.findFavoriteControls(task.content_id);
-    if (controls.length === 1 && controls[0].isSelected()) return true;
+    if (controls.length === 1 && controls[0].isSelected() && request.isComplete()) return true;
     if (attempt + 1 < CONFIRM_ATTEMPTS) await env.sleep(CONFIRM_INTERVAL_MS);
   }
   return false;
@@ -127,12 +136,16 @@ export async function saveTiktok(
   if (initial[0].isSelected()) return { status: "already_synced" };
   const rateLimitBefore = env.rateLimitFingerprint();
 
+  const request = env.watchFavoriteRequest(task.content_id);
+  if (!request) return { status: "failed", error_code: "native_save_failed" };
   try {
     initial[0].click();
+    if (await confirmSelected(task, env, request)) return { status: "synced" };
   } catch {
     return { status: "failed", error_code: "native_save_failed" };
+  } finally {
+    request.dispose();
   }
-  if (await confirmSelected(task, env)) return { status: "synced" };
   return hasNewRateLimit(rateLimitBefore, env.rateLimitFingerprint())
     ? { status: "rate_limited" }
     : { status: "failed", error_code: "native_confirmation_not_observed" };
@@ -249,6 +262,45 @@ function favoriteControls(root: Document, currentUrl: string, contentId: string)
   );
 }
 
+/** Passive timing observation avoids reloading away an optimistic in-flight POST. */
+function watchFavoriteRequest(root: Document, currentUrl: string, contentId: string): TiktokFavoriteRequestWatch | null {
+  const view = root.defaultView;
+  if (!view?.PerformanceObserver || tiktokRouteVideoId(currentUrl) !== contentId) return null;
+  const startedAt = view.performance.now();
+  const origin = new URL(currentUrl).origin;
+  let complete = false;
+  const inspect = (entries: PerformanceEntry[]): void => {
+    for (const entry of entries) {
+      const timing = entry as PerformanceResourceTiming;
+      if (entry.entryType !== "resource" || entry.startTime < startedAt || timing.responseEnd <= 0 ||
+          (timing.initiatorType !== "fetch" && timing.initiatorType !== "xmlhttprequest")) continue;
+      try {
+        const url = new URL(entry.name);
+        if (url.origin === origin && url.pathname === "/api/item/collect/" &&
+            url.searchParams.get("action") === "1" && url.searchParams.get("itemId") === contentId) {
+          complete = true;
+        }
+      } catch { /* Ignore unrelated resource names. */ }
+    }
+  };
+  const observer = new view.PerformanceObserver(list => inspect(list.getEntries()));
+  try {
+    // No buffered history: only requests started after this attempt count.
+    // Unlike getEntriesByType, observing also works when the resource buffer is full.
+    observer.observe({ type: "resource", buffered: false });
+  } catch {
+    observer.disconnect();
+    return null;
+  }
+  return {
+    isComplete() {
+      inspect(observer.takeRecords());
+      return complete;
+    },
+    dispose() { observer.disconnect(); },
+  };
+}
+
 export function createTiktokBrowserEnvironment(
   root: Document = document,
   currentUrl?: string,
@@ -309,6 +361,9 @@ export function createTiktokBrowserEnvironment(
           click: () => action.click(),
         }];
       });
+    },
+    watchFavoriteRequest(contentId) {
+      return watchFavoriteRequest(root, readUrl(), contentId);
     },
     sleep(ms) {
       return new Promise((resolve) => setTimeout(resolve, ms));

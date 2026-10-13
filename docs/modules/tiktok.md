@@ -305,3 +305,10 @@ PYTHONPATH=src python scripts/smoke_tiktok_pipeline.py --config /path/to/config.
 真实授权写入已经执行，观察到站点发出指定视频的加入收藏请求且返回成功；不过刷新后仍未收藏，收藏列表也返回显式空态，故不能把请求成功当作持久化或画像初始化通过。后续需手动点击对照查清客户端点击/账号或网站持久化边界。历史入口及非空画像/周期增量仍以 [验收台账](../platform-source-acceptance.tiktok.md) 为准，未扩大为完整来源已验收。
 
 账号任务的 `TIKTOK_SCOPE_EXECUTE` 新增接收回执：恢复记录/指针写好后再 ACK，后台有界等待并校验 task/scope，缺失回执重投同一只读 scope。该 ACK 只证明可恢复接收，不能代表列表采集成功或画像完成。
+
+
+## 原生收藏请求时序（2026-10-13）
+
+已实现：收藏按钮乐观选中后，等待网页原生收藏请求完成才进入刷新确认，避免插件提前导航中断请求。扩展公开环境接口新增 `watchFavoriteRequest(contentId): TiktokFavoriteRequestWatch | null`，详情见 [extension](extension.md#tiktok-收藏请求完成观察2026-10-13)。无 Cookie/响应体读取，无 API 重放；完成记录只用于时序，不作为保存成功证据。
+
+真实请求返回 HTTP 200、业务 0 并完成后，网页刷新仍未保留授权收藏，因此原生写入、非空画像与周期增量仍未全部通过；本次代码回归与已安装版本实测明确区分，见 [验收台账](../platform-source-acceptance.tiktok.md)。
