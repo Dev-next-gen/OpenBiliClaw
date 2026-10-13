@@ -79,6 +79,14 @@ this default-off edge is tailnet-private and enables no Funnel/Serve. Enable the
 local Web settings as defense in depth (source installs may also use `openbiliclaw set-password`). See
 [Embedded Tailnet](docs/modules/tailnet.md).
 
+Optional keyword grounding: add `parallel` to `[discovery].inspiration_search_backends`. Existing defaults stay unchanged; see [Discovery](docs/modules/discovery.md#可选-parallel-grounding).
+
+```text
+query inspiration → configured provider chain → optional Parallel Search MCP
+                  ← title / URL / excerpts    ← https://search.parallel.ai/mcp
+                  → keyword grounding (no direct recommendation-pool writes)
+```
+
 ## Why OpenBiliClaw?
 
 > The name comes from Bilibili (`Bili` = Bilibili, `Claw` = "the claw that grabs content for you") — the project started as a Bilibili-only tool. Since v0.3.0 it has evolved into a general cross-platform Agent covering Bilibili / Xiaohongshu / Douyin / YouTube / TikTok / X / Zhihu / Reddit / Linux.do / Bangumi / V2EX / Weibo / GitHub / Instagram (experimental) and the open web, with more platforms on the roadmap.

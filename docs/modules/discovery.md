@@ -1508,3 +1508,15 @@ for each epoch:
 ### TikTok 来源验收补全（2026-10-04）
 
 TikTok 双轨关键词（merged / inspiration axis）已补专属生成测试；匿名 inspiration 与 formal tag 使用同一 hashtag 归一化。失败查询不会标 used，feed 单次 12 条与每日调用次数解耦，收藏计数贯穿 favorite_count/collect_count。
+
+### 可选 Parallel grounding
+
+在 `[discovery]` 中设置 `inspiration_search_backends = ["local_cache", "platform_sources", "parallel", "bing_rss", "exa", "you", "serply"]` 可启用 [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp)。默认配置不变。服务免费匿名提供 Fast 模式搜索，有速率限制，无需账户、API Key、Node CLI 或新增依赖。仅把 grounding query 发送到固定端点，不附带画像、Cookie 或本地凭据；沿用 `[network]` 海外出口策略。
+
+| 已实现功能 | 状态 |
+|---|---|
+| 可选 Parallel MCP 标题 / URL / 摘录 grounding，既有 fallback 与 cooldown | ✅ |
+
+公开 API：`ParallelInspirationProvider(timeout_seconds=6.0, transport=None)` 实现 `begin_stage()` 和 `search(query, *, limit)`；由 `build_inspiration_search_provider()` 按 `parallel` 名称装配。单次搜索在同一绝对期限内完成 MCP 初始化与调用，支持 JSON / SSE，限制响应大小，取消向上传播。工具错误、限流或空结果进入已有后备链。摘录只作为关键词灵感证据，不直接写推荐池；本变更不增加聊天工具或页面抓取接口。
+
+该配置可由现有配置文件 / CLI `config-show` 使用，后端共享行为覆盖插件、桌面 Web 和移动 Web 的发现流程；不新增各端设置控件。
