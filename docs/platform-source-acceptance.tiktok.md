@@ -1,5 +1,17 @@
 # TikTok 来源验收报告
 
+## 2026-10-13 历史改为可选、正式周期接线修复
+
+本轮用户明确表示没有历史可跳过，因此 **默认初始化/周期任务的历史能力为 N/A（用户范围排除）**，不是把失败改成 empty。`enqueue_tiktok_bootstrap()` 默认只请求喜欢、收藏、关注；显式历史任务仍支持原协议。旧四 scope 契约结果不复用为新的三 scope。CLI 提问、进度、结果和契约文档同步。
+
+修复一处真实周期阻塞：`RuntimeContext` 创建 `SourceIncrementalSync` 时漏传 TikTok 启用状态，导致逐源配置开启也不能安排任务。实际 runtime builder 回归先因缺少 tiktok 失败，修复后覆盖启动/异步热重载、全局与逐源 opt-in、真实 SQLite 入队、完成后推进周期、25 小时后下一轮以及关闭后取消排队。没有开启生产周期同步。
+
+真实后端（本修复 checkout、正常 `create_app`、隔离存储、现有真实模型配置和 system 代理）+ 已安装扩展完成 **三 scope PASS（明确空态）**：`tt_like / tt_collect / tt_follow` 全部 empty/complete，0/0/0，任务最终 ok/completed。随后正式 `POST /api/init` 返回 202，复用匹配的结果并结束为 **empty_signals**，不再因历史失败阻塞，但也没有生成伪造画像。源数据为空，非空真实画像与真实周期增量仍 **BLOCKED**。非空 fixture 的正常 API→账号绑定→幂等事件→generic 画像 owner 回归通过：第二轮重复项不再写入，新项接受；不把它当作真实账号/模型 E2E。
+
+收藏侧只读确认：原授权视频可正常播放，本人收藏列表仍明确为空，本轮未再点击写入。已询问是否允许另选一条可播放视频对照，在得到回答前不扩大授权范围。上一轮 request completion 修复仍未热加载，本轮扩展包未改；不能认定原生持久化成功。
+
+验证：相关集成 **142 passed**；更广后端 **374 passed**，5 项代理回归先因沙箱禁止本机监听阻断，另在允许监听环境重跑 **5 passed**。Ruff、MyPy（318 文件）、config-show 通过；来源审计 46 PASS / 14 MANUAL / 0 MISSING，只证明注册完整。真实服务已停止，临时账号存储删除，生产配置保持不变。[脱敏证据](testing/assets/2026-10-13-tiktok-optional-history/real-e2e.json)。
+
 ## 2026-10-13 原生收藏请求完成时序修复
 
 范围 `capability-increment`，基线 `8070c731`。OpenCLI 真实浏览器对照中，当前轮多次（4 次）授权 UI 点击均先确认目标未收藏，未执行取消收藏或 API 重放；最终一次捕获的原生 `/api/item/collect/` POST 确认为目标视频、`action=1`、HTTP 200、`status_code/statusCode=0`，约 343ms 完成，无错误文案。关闭公约更新通知后仍一样：等待 3 秒，再真正刷新，新文档 complete 后书签仍白色。原生持久化继续 **FAIL**，不能归因于合成点击、通知弹层或 Intel CPU，也不能把成功响应作为账号收藏证明。

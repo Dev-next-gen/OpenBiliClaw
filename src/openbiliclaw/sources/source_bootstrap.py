@@ -745,7 +745,7 @@ def enqueue_tiktok_bootstrap(
     incremental_owner: str = "",
     notify: Notify | None = None,
 ) -> BootstrapEnqueueResult:
-    """Enqueue the TikTok ``bootstrap_profile`` task without dispatching it."""
+    """Enqueue likes, favorites and following without requiring web watch history."""
     from openbiliclaw.sources.tiktok_tasks import TiktokTaskQueue
 
     scroll_rounds = int(os.environ.get("OPENBILICLAW_TIKTOK_BOOTSTRAP_SCROLL_ROUNDS", "15"))
@@ -758,7 +758,10 @@ def enqueue_tiktok_bootstrap(
 
     payload = _incremental_payload(
         {
-            "scopes": ["tt_like", "tt_collect", "tt_history", "tt_follow"],
+            # Desktop TikTok does not consistently expose watch history. Keep
+            # its explicit scope supported, but never make init or periodic
+            # profile refresh depend on an unavailable account surface.
+            "scopes": ["tt_like", "tt_collect", "tt_follow"],
             "profile_update": True,
             "max_items_per_scope": max(1, max_items),
             "max_scroll_rounds": max(0, scroll_rounds),

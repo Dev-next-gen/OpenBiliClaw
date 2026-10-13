@@ -1,5 +1,5 @@
 # TikTok source contract. Public discovery uses the signed Web API backend;
-# account behavior (likes/favorites/history bootstrap and incremental sync) and
+# account behavior (likes/favorites/following bootstrap and incremental sync) and
 # native save run as browser tasks inside the user's signed-in browser.
 
 schema_version = 1
@@ -69,7 +69,7 @@ cookie-sync = false
 
 [upstream]
 success_content_types = ["application/json"]
-pagination = "Discovery stays bounded first-page snapshots. Account scopes (likes/favorites/history) paginate with upstream cursors under frozen item/page caps; no full-history completeness claim"
+pagination = "Discovery stays bounded first-page snapshots. Default account scopes are likes/favorites/following, collected by bounded DOM scrolling with explicit terminal evidence. Watch history is optional, explicit-task-only because the current desktop UI has no entry; user waived history acceptance on 2026-10-13"
 terminal_evidence = "HTTP 200, business status zero and explicit itemList/item_list array for discovery; account scopes require an explicit has_more=false/cursor exhaustion or the recognized logged-in empty state; only explicit empty means empty"
 terminal_policy = "429 persists shared cooldown; auth/error/schema/gate/transport failures are not empty. Login walls and logged-out task tabs are failed, never valid-empty"
 partial_policy = "Retain successful query candidates and accepted rows; mark only failed query claims failed. Interrupted account pagination keeps partial rows and the scope stays incomplete; no retraction inference"
@@ -138,11 +138,11 @@ feed = "Read-only public metadata into isolated storage; no likes, saves, follow
 search = "Read-only public metadata into isolated storage; no likes, saves, follows or production writes."
 fetch-public-collection = "Read-only public metadata into isolated storage; no likes, saves, follows or production writes."
 read-identity = "Only same-origin session/profile-marker reads cross the task boundary; no raw credentials or upstream mutation."
-snapshot = "Read-only observation of the signed-in account's liked videos, favorites and watch history into isolated storage; the extension never reconstructs engagement POSTs and no upstream mutation is invoked."
+snapshot = "Read-only observation of the signed-in account's liked videos, favorites and followed accounts (watch history only when explicitly requested and exposed) into isolated storage; the extension never reconstructs engagement POSTs and no upstream mutation is invoked."
 
 [events]
 strategy_prefixes = ["tiktok_"]
-mappings = "Discovery candidates plus profile events: liked videos map to like, favorited/collected videos map to favorite, watch history maps to view, followed accounts map to follow. Feed impressions never become profile events."
+mappings = "Discovery candidates plus profile events: liked videos map to like, favorited/collected videos map to favorite, optional explicit watch-history tasks map to view, followed accounts map to follow. Guided init and periodic sync request only likes/favorites/following; absence of history is not a failure for these default tasks. Feed impressions never become profile events."
 scope_caps = "Per-query result cap and per-source execution budgets for discovery; account scopes carry frozen item/page caps set at admission and remain incomplete when capped"
 
 [task]

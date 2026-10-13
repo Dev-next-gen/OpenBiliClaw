@@ -58,7 +58,7 @@ Web API 后端不伪造任何身份材料，身份生命周期如下：
 
 ## 账号信号 bootstrap 与周期回拉（浏览器任务）
 
-除公开 discovery 外，TikTok 按 `docs/platform-source-contract.tiktok.toml`（`integration_level="full"`）接入账号行为信号：点赞（`tt_like`）、收藏（`tt_collect`）、观看历史（`tt_history`）、关注（`tt_follow`）四个 scope 全部由浏览器扩展在用户已登录的 tiktok.com 标签页内只读执行（`extension:browser-task:session-read-only`），后端绝不重放 TikTok 凭据。
+除公开 discovery 外，TikTok 按 `docs/platform-source-contract.tiktok.toml`（`integration_level="full"`）接入账号行为信号：点赞（`tt_like`）、收藏（`tt_collect`）、观看历史（`tt_history`）、关注（`tt_follow`）四种 scope 均由浏览器扩展在用户已登录的 tiktok.com 标签页内只读执行（`extension:browser-task:session-read-only`），后端绝不重放 TikTok 凭据。
 
 后端基建在 `sources/tiktok_tasks.py`，镜像抖音实现但完全独立：
 
@@ -119,7 +119,7 @@ TikTok 加入七平台扩展保存矩阵（`docs/modules/saved-sync.md`）：本
 | `discover --source tiktok` CLI | ✅ | 手动触发正式 `TiktokDiscoveryProducer`（`enabled_override` 旁路 daemon 总开关，镜像 douyin 分支形态） |
 | 账号 bootstrap 任务队列 | ✅ | `TiktokTaskQueue` + `tiktok_tasks` 表（镜像抖音、完全独立）；`tt_like` / `tt_collect` / `tt_history` / `tt_follow` 四 scope，含仓库首个观看历史类 scope；两阶段 staged completion；`GET /api/sources/tiktok/next-task`、`POST /api/sources/tiktok/task-result`、`POST /api/sources/tiktok/kick` 三条路由；周期回拉注册进 `source_incremental_sync` 并由双重开关默认关闭 |
 | 桌面 / 插件设置页卡片 | ✅ | desktop 设置页与 popup 各有 TikTok 卡片：启用开关、后端 mode、可选 Cookie（扩展同步 / 手动粘贴）、region / tz_name、tags / creators、四分支预算、节流、占比、「测试连接」（通用 verify 分发）与发布日期偏好 |
-| guided init 接入 | ✅ | `guidedInit: true`：`_INIT_SOURCE_ORDER` 含 tiktok，init 第 1 阶段串行入队并收集 `bootstrap_profile` 任务（点赞 / 收藏 / 观看历史 / 关注），事件经 `tiktok_bootstrap_videos_to_events` 进入偏好分析与画像构建；CLI 有 `--yes-tiktok` / `--no-tiktok`（`OPENBILICLAW_NO_TIKTOK=1` 优先），setup / 桌面 / popup 的来源清单由共享 roster 派生 |
+| guided init 接入 | ✅ | `guidedInit: true`：`_INIT_SOURCE_ORDER` 含 tiktok，init 第 1 阶段串行入队并收集 `bootstrap_profile` 任务（点赞 / 收藏 / 关注；历史仅显式任务可选），事件经 `tiktok_bootstrap_videos_to_events` 进入偏好分析与画像构建；CLI 有 `--yes-tiktok` / `--no-tiktok`（`OPENBILICLAW_NO_TIKTOK=1` 优先），setup / 桌面 / popup 的来源清单由共享 roster 派生 |
 | 配置面 | ✅ | `TiktokSourceConfig`（`mode` / `cookie_env` / `daily_feed_budget` 等）+ `config.example.toml` + `[scheduler.pool_source_shares] tiktok` + API config GET/PUT（非法 `mode` 保存时拒绝）+ credentials 只读行 |
 | 依赖 | ✅ | `curl-cffi>=0.15` 进入默认依赖（Chrome TLS 指纹；与 yt-dlp 可选依赖同包，版本天然兼容） |
 
@@ -312,3 +312,14 @@ PYTHONPATH=src python scripts/smoke_tiktok_pipeline.py --config /path/to/config.
 已实现：收藏按钮乐观选中后，等待网页原生收藏请求完成才进入刷新确认，避免插件提前导航中断请求。扩展公开环境接口新增 `watchFavoriteRequest(contentId): TiktokFavoriteRequestWatch | null`，详情见 [extension](extension.md#tiktok-收藏请求完成观察2026-10-13)。无 Cookie/响应体读取，无 API 重放；完成记录只用于时序，不作为保存成功证据。
 
 真实请求返回 HTTP 200、业务 0 并完成后，网页刷新仍未保留授权收藏，因此原生写入、非空画像与周期增量仍未全部通过；本次代码回归与已安装版本实测明确区分，见 [验收台账](../platform-source-acceptance.tiktok.md)。
+
+
+## 可选历史与周期调度接线（2026-10-13）
+
+| 已实现行为 | 边界 |
+| --- | --- |
+| 默认三项账号信号 | `enqueue_tiktok_bootstrap()` 保持签名不变，手动初始化与周期增量都固定请求 `tt_like / tt_collect / tt_follow`。旧四项任务不会被默认三项任务错误复用；`tt_history` 仍可显式入队，但其可用性不属于当前必过验收范围。 |
+| 正式服务调度 | `RuntimeContext` 启动和热重载把 `sources.tiktok.enabled` 传给 `SourceIncrementalSync`。仍要求全局与 TikTok 的 incremental 开关、来源 enabled、画像 ready 和扩展在线；默认不自动开启。 |
+| 非空增量与去重 | 两轮非空 fixture 通过正常 API/任务/事件入口：旧收藏不重复、新收藏进入 generic 画像消费路径。该回归不冒充真实账号或模型生成画像。 |
+
+用户明确同意没有网页历史时跳过；实时三项采集已完整得到 0/0/0 的明确空态。空账号不合成画像，站内收藏及非空画像的真实状态见 [最新台账](../platform-source-acceptance.tiktok.md)。

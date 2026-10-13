@@ -34,7 +34,7 @@ background ─ background admission (default 3) ──────┘
                 parked when canonical available = 0
 
 TikTok cookie sync: validated effective credential change → runtime lane handoff → refreshed search client
-TikTok account tasks: bootstrap_profile(scopes[4], max_items_per_scope, profile_update)
+TikTok account tasks: enabled policy (startup / reload) -> bootstrap_profile(likes, favorites, following; history optional)
                       → inactive owned tab → durable scope acceptance ACK → viewer-owned active list only
                       → bounded durable scope results / same-account fence
                       → staged canonical result → account-scoped event receipt → profile

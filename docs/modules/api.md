@@ -471,3 +471,8 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 ### TikTok 凭据同步与运行时刷新
 
 `POST /api/sources/tiktok/credential` 在真实验证和持久化之后比较有效凭据；发生变化时经现有 lane handoff 重建运行时，使启动时的访客客户端立即切换到登录态搜索。相同 Cookie 重投、或 env 优先导致有效凭据未变时不重启任务。`persist_credential` 用 `PersistResult.runtime_dirty` 传递这一差异。
+
+
+### TikTok 默认账号范围与周期启用（2026-10-13）
+
+`POST /api/init` 的 TikTok 默认范围是喜欢、收藏、关注，观看历史不再是必要输入；`next-task` / `task-result` 协议不变，显式历史任务仍按原契约执行。非空结果沿账号隔离、staged result 与幂等 ingress 进入 generic 画像消费路径，重复回调及下轮重复收藏不会重复写事件。正常 runtime 构建/热重载现在向周期调度器传递 TikTok 来源开关，保持全局和逐源双 opt-in，不新增端点或权限。

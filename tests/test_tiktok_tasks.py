@@ -850,7 +850,8 @@ def test_real_tiktok_api_payload_executes_all_scopes_in_extension(
     posts = json.loads(line.removeprefix("OBC_RESULT="))
     assert posts and posts[-1]["status"] == expected_status
     assert {row["scope"] for row in posts[-1]["videos"]} == set(response.json()["scopes"])
-    assert len(posts[-1]["videos"]) == 4  # cumulative frozen cap of one per scope
+    assert response.json()["scopes"] == ["tt_like", "tt_collect", "tt_follow"]
+    assert len(posts[-1]["videos"]) == 3  # cumulative frozen cap of one per default scope
     for payload in posts:
         callback = client.post("/api/sources/tiktok/task-result", json=payload)
         assert callback.status_code == 200, callback.text
@@ -858,10 +859,9 @@ def test_real_tiktok_api_payload_executes_all_scopes_in_extension(
     assert {event["event_type"] for event in memory.events} == {
         "like",
         "favorite",
-        "view",
         "follow",
     }
-    assert len(memory.events) == 4
+    assert len(memory.events) == 3
 
 
 def test_tiktok_failure_keeps_previously_accepted_rows(database: Database) -> None:
@@ -874,6 +874,46 @@ def test_tiktok_failure_keeps_previously_accepted_rows(database: Database) -> No
     result = json.loads(queue.get(task_id)["result_json"])
     assert result["videos"] == rows
     assert result["error"] == "account_changed"
+
+
+def test_nonempty_profile_event_and_incremental_ingress_do_not_require_watch_history(
+    tiktok_task_client: tuple[Any, Database, _RecordingMemoryManager],
+) -> None:
+    """Real API/queue/ingress with fixture browser rows; no live-model claim."""
+    from openbiliclaw.config import load_config
+    from openbiliclaw.sources.source_bootstrap import enqueue_tiktok_bootstrap
+
+    client, db, memory = tiktok_task_client
+    load_config().scheduler.source_incremental_enabled = True
+    first = {
+        "scope": "tt_collect",
+        "video_id": "7433494591833247008",
+        "url": "https://www.tiktok.com/@fixture/video/7433494591833247008",
+        "title": "Fixture favorite",
+        "author": "fixture",
+    }
+    second = {**first, "video_id": "7433494591833247009", "url": first["url"][:-1] + "9"}
+    for incremental, videos in [(False, [first]), (True, [first, second])]:
+        queued = enqueue_tiktok_bootstrap(db, force=True, incremental=incremental)
+        assert queued.task_id
+        task = client.get("/api/sources/tiktok/next-task").json()
+        assert task["id"] == queued.task_id
+        assert task["scopes"] == ["tt_like", "tt_collect", "tt_follow"]
+        result = {
+            "task_id": queued.task_id,
+            "status": "ok",
+            "viewer_handle": "test_viewer",
+            "videos": videos,
+            "scope_counts": {"tt_like": 0, "tt_collect": len(videos), "tt_follow": 0},
+        }
+        assert client.post("/api/sources/tiktok/task-result", json=result).status_code == 200
+        # A retried result must not reapply either the initial or new signal.
+        assert client.post("/api/sources/tiktok/task-result", json=result).status_code == 200
+        assert len(memory.events) == len(videos)
+        assert all(
+            event["metadata"]["profile_update_owner"] == "generic" for event in memory.events
+        )
+    assert [event["event_type"] for event in memory.events] == ["favorite", "favorite"]
 
 
 def test_tiktok_queue_does_not_use_mutable_titles_as_item_identity(database: Database) -> None:

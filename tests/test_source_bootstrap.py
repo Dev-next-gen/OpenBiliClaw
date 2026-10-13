@@ -140,7 +140,7 @@ _PLATFORMS = (
         "openbiliclaw.sources.tiktok_tasks.TiktokTaskQueue",
         "bootstrap_profile",
         {
-            "scopes": ["tt_like", "tt_collect", "tt_history", "tt_follow"],
+            "scopes": ["tt_like", "tt_collect", "tt_follow"],
             "max_items_per_scope": 300,
             "profile_update": True,
             "max_scroll_rounds": 15,
@@ -1003,7 +1003,9 @@ class _SeedMemory:
         return self.state
 
 
-@pytest.mark.parametrize("kind", ["smoke", "partial_scopes", "failed", "degraded"])
+@pytest.mark.parametrize(
+    "kind", ["smoke", "partial_scopes", "failed", "degraded", "legacy_history"]
+)
 def test_tiktok_init_does_not_reuse_ineligible_terminal(tmp_path: Path, kind: str) -> None:
     from openbiliclaw.sources import source_bootstrap
     from openbiliclaw.sources.tiktok_tasks import TiktokTaskQueue
@@ -1013,13 +1015,15 @@ def test_tiktok_init_does_not_reuse_ineligible_terminal(tmp_path: Path, kind: st
     database.initialize()
     queue = TiktokTaskQueue(database)
     payload = {
-        "scopes": ["tt_like", "tt_collect", "tt_history", "tt_follow"],
+        "scopes": ["tt_like", "tt_collect", "tt_follow"],
         "profile_update": kind != "smoke",
         "max_items_per_scope": 300,
         "max_scroll_rounds": 15,
     }
     if kind == "partial_scopes":
         payload["scopes"] = ["tt_like"]
+    if kind == "legacy_history":
+        payload["scopes"] = ["tt_like", "tt_collect", "tt_history", "tt_follow"]
     task_id = queue.enqueue_with_id("bootstrap_profile", payload)
     assert task_id
     if kind == "failed":

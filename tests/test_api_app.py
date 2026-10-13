@@ -3011,6 +3011,7 @@ class TestBackendAPI:
             "reddit": False,
             "linuxdo": False,
             "v2ex": False,
+            "tiktok": False,
         }
         assert captured["runtime_controller_kwargs"]["bilibili_producer"] is not None
         assert (

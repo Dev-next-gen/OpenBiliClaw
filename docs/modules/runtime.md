@@ -763,3 +763,10 @@ TikTok 的 formal producer 与 inspiration 共用 `sources.tiktok_state.TiktokRe
 ### TikTok 封面网络边界
 
 `runtime.tiktok_images.fetch_tiktok_cover(httpx.URL) -> (bytes, content_type)` 由共享 image cache 对三个 TikTok CDN 后缀分发。每跳经配置网络路由调用 Cloudflare DoH（仅 hostname），拒绝非公开/过渡地址、非白名单 host 和非 443 端口，以 CONNECT_TO 固定 IP 并保持 TLS 主机身份；使用新会话、无账号 Cookie、10MB 流式上限。DNS 失败时不回退到不安全下载。其他来源保留原 image cache 路径。
+
+
+### TikTok 周期回拉启用状态（2026-10-13）
+
+已实现：正式 `RuntimeContext` 的启动与配置热重载将 TikTok 加入 `SourceIncrementalSync.source_enabled`，修复配置已启用但实际调度永远跳过的遗漏。`build_runtime_context()` / `RuntimeContext.rebuild_from_config()` 的公开签名不变；来源映射集合与 `SOURCE_ORDER` 用实际 builder 回归校验。全局和逐源 incremental 开关仍默认关闭，未到期不入队，完成推进 cadence，关闭取消 pending 周期任务。
+
+共享 `enqueue_tiktok_bootstrap()` 改为喜欢、收藏、关注三个默认 scope；历史缺失不影响默认任务完整成功。新增正式 runtime→SQLite→终态对账测试，模拟时钟覆盖下一周期；该测试不代表浏览器非空账号 E2E。

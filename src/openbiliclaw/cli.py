@@ -7942,7 +7942,7 @@ def _ask_tiktok_inclusion() -> bool:
     console.print()
     console.print("[bold]🎬 TikTok 数据接入(可选)[/bold]")
     console.print(
-        "把你的 TikTok[bold cyan]点赞 / 收藏 / 观看历史 / 关注[/bold cyan]混进画像,"
+        "把你的 TikTok[bold cyan]点赞 / 收藏 / 关注[/bold cyan]混进画像,"
         "系统能读懂你跨平台的口味。"
     )
     console.print()
@@ -10131,7 +10131,7 @@ async def run_guided_init(
     )
     if tiktok_task_id:
         console.print(
-            "  [dim]已请求扩展拉 TikTok 点赞 / 收藏 / 观看历史 / 关注"
+            "  [dim]已请求扩展拉 TikTok 点赞 / 收藏 / 关注"
             "(后台标签页顺序读取，最多等待约 8 分钟)。[/dim]"
         )
     if include_tiktok:
@@ -10153,7 +10153,6 @@ async def run_guided_init(
             "  TikTok "
             f"点赞 [green]{tiktok_scope_counts.get('tt_like', 0)}[/green] 条"
             f" / 收藏 [green]{tiktok_scope_counts.get('tt_collect', 0)}[/green] 个"
-            f" / 观看历史 [green]{tiktok_scope_counts.get('tt_history', 0)}[/green] 条"
             f" / 关注 [green]{tiktok_scope_counts.get('tt_follow', 0)}[/green] 人"
         )
     elif tiktok_status == "degraded":
@@ -12068,7 +12067,7 @@ def init(
         ("🌐 YouTube 入库事件", f"{len(yt_events)} 条"),
         ("🎬 TikTok 点赞", f"{tiktok_like} 条"),
         ("🎬 TikTok 收藏", f"{tiktok_collect} 个"),
-        ("🎬 TikTok 观看历史", f"{tiktok_history} 条"),
+        ("🎬 TikTok 观看历史（可选）", f"{tiktok_history} 条" if tiktok_history else "默认不采集"),
         ("🎬 TikTok 关注", f"{tiktok_follow} 人"),
         ("🌐 TikTok 入库事件", f"{len(tiktok_events)} 条"),
         (
