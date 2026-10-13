@@ -4,6 +4,10 @@
 
 ## v0.3.228：画像门控大幅降本与安装包信任修复（2026-10-13）
 
+- 修复 macOS 打包在 Apple stapler 抖动下无重试：`staple_macos_artifact` 的 staple/validate 此前单次调用即失败，而 Apple ticket-delivery 端点会间歇断连（v0.3.228 x64 连续三次 exit 68，公证本身已 Accepted）；现两个动作各自重试 3 次（10s/20s/30s 退避），与 hdiutil 创建路径一致。
+
+- 修复 macOS 桌面发布构建的 bge-m3 digest allowlist 漂移：macOS 任务此前下载 `ollama/releases/latest` 的 Ollama.app，新版客户端 pull 到的 manifest 多出一层嵌套 manifest blob（内容为引用同一 config/model/license 的包装清单，已核实），触发 `make_model_seed` 防漂移护栏失败；Windows 任务一直固定在 0.32.13 无此问题。现将 `release-desktop.yml` 与 `build-installers.yml` 的 macOS Ollama 统一定位到 v0.32.13，两平台客户端行为一致。
+
 - 修复 posture gate soul_rebuild 负载未按 spec 实现为 diff 摘要（#288）：`_gate_soul_rebuild` 的判定快照此前把完整兴趣列表逐字节传两遍（before + after），单条兴趣中四个 ISO 时间戳字段占 55% 字节却对判定无用，实测单次输入高达 13 万～15 万 tokens。现改为 `_interest_rebuild_diff()` 生成的 compact diff 摘要（added/removed/changed + 计数，条目仅保留 name/category/weight/evidence_count），与 spec 接入点③「rebuild diff 摘要过门控」一致；confirmed_hypotheses 触发源前后快照相同，diff 为空、信号由 context 承载。真实 provider 端到端实测单次输入 41,149 → 4,221 tokens（降约 90%），shadow 默认模式调用方零延迟不变。
 
 - 修复 Windows 安装包被 Kaspersky 查杀（#281）：移除打包流程中对随包 `ollama.exe` 及 `lib/ollama` runner 的 PE 子系统改写步骤（`release-desktop.yml` / `build-installers.yml`），并删除 `packaging/patch_pe_subsystem.py` 及其测试。该改写使 Ollama 官方 Authenticode 签名失效（`TRUST_E_BAD_DIGEST`），被杀软按「已签名但被篡改」报 `HEUR:Trojan.Win64.Generic`；上游 ollama 自 PR #8668 起已用 `CREATE_NO_WINDOW` 启动 runner，配合 supervisor 启动 `ollama serve` 时的 `CREATE_NO_WINDOW`，不再弹控制台窗口，无需改二进制。两个 workflow 在编译安装包前新增 `Get-AuthenticodeSignature` 验签门禁，随包 exe 签名失效即构建失败，防止同类回归。同时将 `packaging/openbiliclaw.spec` 的 UPX 压缩关闭（`upx=False`），避免本地构建产出更易被误报的 UPX 壳 bootloader。
