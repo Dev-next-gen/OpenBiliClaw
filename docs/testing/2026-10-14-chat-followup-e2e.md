@@ -63,4 +63,11 @@
 本地证据保存在 `output/chat-followup-e2e-20261014/`（gitignored）：
 `all-turns-final.json`、各会话 SSE/持久历史、`cli.txt`、`desktop-closure.jpg`、
 `mobile-closure.jpg`、`exploration-converged.jpg`。仅包含虚构测试对话；模型凭据与隔离配置
-不纳入仓库或证据目录。测试完成后关闭隔离服务，保留数据供复核。
+不纳入仓库或证据目录。测试完成后关闭隔离服务；交付时将上述证据保留在主工作区，清理隔离运行数据与配置。
+
+## main 集成验证（2026-10-14）
+
+合入最新主线 `b6854cfd` 后无冲突；重跑上述六组测试及主线新增的
+`tests/test_posture_gate.py`，共 341 passed（24 条现有 FastAPI 弃用警告）。
+`ruff check src/ tests/` 通过；`mypy src/` 通过（309 个源文件）。
+本轮没有重跑全量测试，也未发布新版本或安装包。
