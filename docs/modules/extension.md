@@ -875,6 +875,8 @@ Popup 按当前回合和 hop 累积 `delta`，历史刷新/会话切回可恢复
 
 TikTok 内容脚本的 `detectTiktokAccessState` 仅以页面可见文字作为登录墙文字依据，避免 SSR/翻译脚本中的登录文案误报；可见登录控件仍优先，缺少正向登录证据仍失败关闭。开发热重载可通过 `POST /api/extension/reload` 广播到当前已连接的扩展；装载路径与产物摘要必须另行核对。
 
+2026-10-14 已用该本地入口完成 TikTok 修复包实机热加载：先比较注册目录的 manifest/生成文件，保留已有配置改动，再更新实际不同的产物，核对 delivered 与重连并用新建任务页验收。Chrome 管理通道不可用不必然阻塞该路径；delivered 本身只证明广播送达，不证明收藏成功，仍须核对正式任务终态与新文档持久化结果，详见 [TikTok 验收](../platform-source-acceptance.tiktok.md)。
+
 `runScope` 在执行前有界等待可识别的已登录 viewer；本人资料导航等待页面 URL 与身份标题一致，最多 10 秒，不以点击成功代替归属证据。原 task idle/absolute deadline 与累计预算仍生效。
 
 渲染等待同时限制轮数和墙钟时间；已在本人 URL 时原地等待标题，避免重复点击资料入口导致整页导航恢复循环。
