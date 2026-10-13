@@ -81,7 +81,9 @@ jobs:
 
       - name: Download official Ollama.app runtime
         run: |
-          curl -L https://github.com/ollama/ollama/releases/latest/download/Ollama-darwin.zip -o Ollama-darwin.zip
+          # Pinned, same release as the Windows job (v0.32.13); see
+          # release-desktop.yml for the digest-drift rationale.
+          curl -L https://github.com/ollama/ollama/releases/download/v0.32.13/Ollama-darwin.zip -o Ollama-darwin.zip
           unzip -q Ollama-darwin.zip -d ollama-app
           test -x ollama-app/Ollama.app/Contents/Resources/ollama
           test -x ollama-app/Ollama.app/Contents/Resources/llama-server

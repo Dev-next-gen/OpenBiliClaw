@@ -64,7 +64,11 @@ jobs:
 
       - name: Download official Ollama.app runtime
         run: |
-          curl -L https://github.com/ollama/ollama/releases/latest/download/Ollama-darwin.zip -o Ollama-darwin.zip
+          # Pinned, same release as the Windows job (v0.32.13): a newer
+          # `latest` client pulls bge-m3 with a nested-manifest layer that
+          # drifts the make_model_seed digest allowlist (v0.3.228 desktop
+          # build failure, 2026-10-13). Keep both platforms on one version.
+          curl -L https://github.com/ollama/ollama/releases/download/v0.32.13/Ollama-darwin.zip -o Ollama-darwin.zip
           unzip -q Ollama-darwin.zip -d ollama-app
           test -x ollama-app/Ollama.app/Contents/Resources/ollama
           test -x ollama-app/Ollama.app/Contents/Resources/llama-server
