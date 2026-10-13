@@ -33,7 +33,12 @@
 
 ## 10 秒看懂 OpenBiliClaw
 
-> Instagram 已纳入 v0.3.227，仍为**实验性、默认关闭**。真实账号初始化 → 当前配置模型 → 发现推荐，以及 Web、插件和 iOS 模拟器消费已有验证；Likes 完整终止、双账号、Firefox 登录态与手机真机仍未完成验收，跨端保存状态需刷新。配置与海外网络要求见 [来源说明](docs/modules/instagram.md)，范围见 [验收台账](docs/platform-source-acceptance.instagram.md)。
+> **新增来源：Instagram 与 TikTok**，均为**实验性、默认关闭**。
+>
+> - **Instagram** 已随 v0.3.227 发布：按话题、创作者发现内容，也可登录后导入本人的点赞、收藏和关注来初始化画像。[连接说明](docs/modules/instagram.md) · [实测范围](docs/platform-source-acceptance.instagram.md)。
+> - **TikTok** 已合入 main，待下一版本发布：支持推荐流、话题、创作者发现及浏览器登录后的关键词搜索；真实发现、模型评估、推荐和桌面/手机 Web 展示已验收。[连接说明](docs/modules/tiktok.md) · [实测范围](docs/platform-source-acceptance.tiktok.md)。
+>
+> TikTok 站内收藏暂缓，非空真实账号画像与周期增量待验（[#295](https://github.com/whiteguo233/OpenBiliClaw/issues/295)）；Instagram 的完整 Likes 历史、双账号和 Firefox/手机真机仍待验，跨端保存状态需刷新。两者均不宣称全部账号能力已完成验收。
 
 一个纯本地、私有、开源的自进化跨平台内容发现 Agent：从你的跨平台使用、反馈和对话中持续深化心理画像，带着对你的理解主动去 B 站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram（实验性）与开放 Web 找内容。
 
@@ -66,7 +71,7 @@
    请按照 https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md 的说明帮我部署 OpenBiliClaw 后端(务必用 Bash 的 curl 下载这个文档,不要用 WebFetch — 会丢关键指令)
    ```
 
-3. **连接来源** —— 在装了插件的浏览器登录 [B 站](https://www.bilibili.com)（默认初始化来源），或改选小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / V2EX / 微博 / GitHub。Linux.do、Bangumi、V2EX、微博与 GitHub 均可公开发现；需要账号态的来源仍复用已安装插件，GitHub 则由后端官方 REST API 匿名读取公开 repository。GitHub 可用公开用户名把 starred repositories 用作初始化信号，PAT 只是可选的提额和身份校验方式。TikTok（实验性）以后端 Web API 访客身份做推荐流 / 话题标签 / 创作者发现，可选登录 Cookie 后可尝试关键词搜索（需单独验证可用性）；已接入登录态引导初始化，账号列表的真实安装版验收仍待完成。 Instagram（实验性、默认关闭）通过隔离浏览器任务发现内容，登录后可只读导入本人点赞、收藏和关注；生产启用前需确认 Meta 自动采集许可。
+3. **连接来源** —— 在装了插件的浏览器登录 [B 站](https://www.bilibili.com)（默认初始化来源），或改选小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / V2EX / 微博 / GitHub。Linux.do、Bangumi、V2EX、微博与 GitHub 均可公开发现；需要账号态的来源仍复用已安装插件，GitHub 则由后端官方 REST API 匿名读取公开 repository。GitHub 可用公开用户名把 starred repositories 用作初始化信号，PAT 只是可选的提额和身份校验方式。TikTok、Instagram 需在「设置 → 来源」中手动开启；使用已装插件的浏览器登录，Instagram 还需授权站点访问。TikTok 未登录可发现公开视频，登录后由插件同步凭据用于关键词搜索；Instagram 可只读导入本人点赞、收藏和关注。两者均需海外网络：后端沿现有网络/代理设置，浏览器任务使用浏览器自身代理。连接与许可要求见 [TikTok](docs/modules/tiktok.md)、[Instagram](docs/modules/instagram.md)。
 
 4. **打开界面** —— 浏览器访问 `http://127.0.0.1:8420/web`；手机扫插件二维码打开 `http://<电脑局域网 IP>:8420/m/`，保存到主屏幕即可当 App 用；想要原生 App 体验，可安装独立仓库的 [Flutter 客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile)（Android / iOS / Web / 桌面，安装包见 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest)），在设置里填后端地址即可连接同一后端。
 
@@ -435,6 +440,7 @@ OpenBiliClaw 不保存你的平台密码，也不替你绕过登录。需登录�
 | **Bangumi** | 无需登录；可选填公开用户名读取公开收藏，或填个人令牌读取私密收藏；插件在 bgm.tv / bangumi.tv 仅做账号身份自动识别（不读 Cookie、不采集浏览行为） | 未填用户名时不能把 Bangumi 作为唯一画像初始化来源，但匿名 search / ranked / 按日期 discovery 仍可用 |
 | **V2EX** | 无需登录；可选填 PAT；guided init / 增量任务在扩展中读取本人主题、本人回复、收藏主题和收藏 Node 的公开渲染字段 | 未连接扩展时仍可匿名 search / node / tab / hot / latest discovery；收藏 scope 需要实际登录态 |
 | **GitHub** | 无需登录；可选填公开用户名读取公开 starred repositories，PAT 只用于提额和 `/user` 身份核验 | 未填身份时仍可匿名 search / ranked / latest discovery，但不能把 GitHub 作为唯一画像初始化来源；不读取浏览器 Cookie |
+| **TikTok（实验性，main）** | 公开发现无需登录；关键词搜索需已登录浏览器插件同步凭据 | 默认关闭；发版前需使用匹配的 main 后端与扩展构建，非空账号画像及站内收藏尚未完整验收 |
 | **Instagram（实验性）** | 显式启用并授权扩展访问 instagram.com；个人初始化需在同一浏览器登录 | 匿名公开页可用性受站点限制；未登录不能导入本人点赞/收藏/关注；需要可访问海外站点的浏览器网络 |
 
 小红书、抖音、YouTube、知乎和 Linux.do 走 Chrome 插件任务链路，Reddit 日常 discovery 默认走随后端安装的 rdt-cli、初始化信号仍走插件，X 的 discovery 走服务端 cookie 重放；GitHub 则始终由后端官方 REST client 只读公开 repository，不进入插件任务。Linux.do 上游请求全部在真实站点 tab 内以同源 GET 执行，`_t` 只作登录布尔，Cookie 值和原始响应不会上传。Reddit/X、YouTube、小红书、抖音与知乎原生保存 executor 已 6/6 接入并通过 fixture 测试；2026-07-14 的真实账号回归中，六平台 favorite 与 watch-later/fallback 均得到 `synced/already_synced`。当前知乎收藏页已使用全局 `收藏 / 已收藏` 切换，目标文案为 `知乎收藏`；已收藏初始态和二次验证都严格只读，扩展不会重复点击保存。Linux.do 与 GitHub 不提供任何站内写回。`[sources.browser].cdp_url` 只保留给通用 Web / 自定义网页源的浏览器抓取场景。
@@ -647,7 +653,7 @@ TikTok：`正式发现 / 灵感探索 → 共用请求间隔与持久限流状�
 
 TikTok 登录态同步：`扩展 Cookie → 验证并保存 → 有效凭据变化时安全重建运行时 → 挂载关键词搜索`；重复同步不重启任务。
 
-TikTok 账号链路：`手动初始化 / 显式开启的周期增量 → 来源启用状态（启动 / 热重载）→ bootstrap_profile（喜欢 / 收藏 / 关注，历史可选，冻结预算）→ 插件持久接收确认 / 本人列表 → 账号绑定 / staged result → 幂等事件 → 画像`；站内保存单独经 `local membership → durable native-save job → 精确视频收藏 / 刷新只读确认`。新增账号能力的真实安装版验收仍待完成，见 [验收台账](docs/platform-source-acceptance.tiktok.md)。
+TikTok 账号链路：`手动初始化 / 显式开启的周期增量 → 来源启用状态（启动 / 热重载）→ bootstrap_profile（喜欢 / 收藏 / 关注，历史可选，冻结预算）→ 插件持久接收确认 / 本人列表 → 账号绑定 / staged result → 幂等事件 → 画像`；站内保存单独经 `local membership → durable native-save job → 精确视频收藏 / 刷新只读确认`。已安装 Chrome 的登录与明确空列表采集通过；非空真实账号画像/周期增量待验，站内收藏暂缓，见 [验收台账](docs/platform-source-acceptance.tiktok.md) 与 [#295](https://github.com/whiteguo233/OpenBiliClaw/issues/295)。
 
 本地向量：`正式请求 / 诊断 → Ollama 自动加速 → 有效向量；runner 故障 → CPU 重试 → 验证结果`。CPU 选择在本次后端运行期间共享，重启后重新尝试自动加速。
 
@@ -698,7 +704,7 @@ TikTok 账号链路：`手动初始化 / 显式开启的周期增量 → 来源�
 | **小红书** | 被动收集 · 搜索 · 创作者订阅 · 初始化导入 | 插件在已登录页面读取，零后端爬取 |
 | **抖音** | 初始化导入 · 搜索 · 热点 · 推荐流 | CLI/daemon 共用正式 producer，插件后台 tab 模拟 DOM 操作，候选统一进入待评估池 |
 | **YouTube** | 初始化导入 · Takeout 离线导入 · 搜索 / 热门 / 频道 | 插件读画像信号，日常发现后端直连补池 |
-| **TikTok**（实验性） | 推荐流 · 话题标签 · 创作者 · 搜索（需登录 Cookie） | Web API 访客身份 + 请求签名匿名读取，yt-dlp 兜底，后端直连补池；可选登录 Cookie（扩展自动同步）挂载关键词搜索，实际可用性需另验 |
+| **TikTok**（实验性，main 已合入、待发版） | 推荐流 · 话题 · 创作者 · 登录后关键词搜索 | 默认关闭；访客发现与插件同步登录后的搜索已实测，桌面/手机 Web 可消费推荐；非空账号画像/增量待验，站内收藏暂缓。[详情](docs/modules/tiktok.md) |
 | **X（Twitter）** | 初始化导入 · 搜索 · For-You · 关注作者 | discovery 使用服务端只读 cookie 重放；原生书签 executor 已接入但未实号验证 |
 | **知乎** | 初始化导入 · 搜索 · 热榜 · 推荐 · 作者 · 相关 | 插件在已登录 tab 内读取，返回文字卡片 |
 | **Reddit** | 初始化导入 · 搜索 · 热门 · Subreddit · 相关 | discovery 默认 rdt-cli；Saved executor 已接入但未实号验证 |
@@ -814,7 +820,7 @@ OpenBiliClaw/
 
 ## 🗺️ 后续规划
 
-OpenBiliClaw 的目标是做你的**全网个性化内容入口**——从 B 站起步，已覆盖小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub 与通用 Web，下一步：
+OpenBiliClaw 的目标是做你的**全网个性化内容入口**——从 B 站起步，已覆盖小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram（实验性）与通用 Web，下一步：
 
 - **更多内容源** — 各类 BBS / 论坛与垂直社区；每个平台都遵循统一来源契约与验收门禁
 - **跨平台兴趣融合** — 你在 B 站看的机械键盘 + 小红书种草的咖啡器具 + 抖音点赞收藏的短视频偏好 + YouTube 长视频观看和订阅 + X 点赞收藏的资讯 = 一个完整的你。画像融合让推荐不再割裂
