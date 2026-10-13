@@ -65,7 +65,10 @@ def transport(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         def __init__(self, **kwargs: object) -> None:
             options = kwargs["curl_options"]
             pointer = options[CurlOpt.CONNECT_TO]
-            kwargs["curl_options"] = {CurlOpt.CONNECT_TO: [ffi.string(pointer.data).decode()]}
+            kwargs["curl_options"] = {
+                **options,
+                CurlOpt.CONNECT_TO: [ffi.string(pointer.data).decode()],
+            }
             state.sessions.append(kwargs)
 
         async def __aenter__(self) -> Session:
@@ -99,8 +102,11 @@ async def test_pins_connection_and_retains_proxy_tls_and_host(
     assert await fetch_cover_bytes(url) == (b"image", "image/jpeg")
     assert transport.sessions == [
         {
-            "proxy": "http://proxy.invalid:8888",
-            "curl_options": {CurlOpt.CONNECT_TO: [f"p16.{suffix}:443:1.1.1.1:443"]},
+            "proxies": {"all": "http://proxy.invalid:8888"},
+            "curl_options": {
+                CurlOpt.CONNECT_TO: [f"p16.{suffix}:443:1.1.1.1:443"],
+                CurlOpt.NOPROXY: "",
+            },
         }
     ]
     target, kwargs = transport.calls[0]
@@ -154,11 +160,21 @@ async def test_system_proxy_is_materialized_and_direct_remains_direct(
     monkeypatch: pytest.MonkeyPatch, transport: SimpleNamespace, system: bool
 ) -> None:
     monkeypatch.setattr(tiktok_images, "_httpx_client_kwargs", lambda host: {"trust_env": system})
-    lookup = Mock(return_value="http://system-proxy.invalid:8888")
-    monkeypatch.setattr("openbiliclaw.network.outbound_cli_proxy_url", lookup)
+    from curl_cffi import CurlOpt
+
+    monkeypatch.setattr(
+        "openbiliclaw.network.getproxies",
+        lambda: {
+            "https": "http://system-proxy.invalid:8888",
+            "no": "bypass.invalid",
+        },
+    )
     await fetch_cover_bytes("https://p16.tiktokcdn.com/a")
-    assert transport.sessions[0]["proxy"] == (lookup.return_value if system else "")
-    assert lookup.call_count == int(system)
+    options = transport.sessions[0]
+    assert options["proxies"] == (
+        {"https": "http://system-proxy.invalid:8888", "all": ""} if system else {"all": ""}
+    )
+    assert options["curl_options"][CurlOpt.NOPROXY] == ("bypass.invalid" if system else "")
 
 
 async def test_empty_image_body_is_not_success(transport: SimpleNamespace) -> None:

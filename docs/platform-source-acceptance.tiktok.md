@@ -1,5 +1,17 @@
 # TikTok 来源验收报告
 
+## 2026-10-13 代理路由修复与真实点击对照
+
+范围 `capability-increment`，基线 `844485bc`，独立 repair worktree。默认 `system` 路由已存在，但 TikTok 的 curl_cffi 未物化 macOS OS-only 代理；`proxy=""` 被库忽略，direct 仍继承环境代理；custom 又会被环境 NO_PROXY 绕过。本机真实 libcurl → origin/proxy 回归先 **3 failed / 2 passed**，统一适配后 **5 passed**。Web API、登录探针和 TikTok 封面使用同一适配器；封面仍固定已验证公网地址和 TLS。Instagram/TikTok 浏览器任务沿用浏览器代理，未新增权限、改系统代理、切节点或重写用户配置。
+
+当前真实配置 `mode=system`，修复后的无 Cookie TikTok 首页 HTTPS 请求经已物化代理返回 **200 / 407811 bytes / 0.7 秒**；只证明公开网络通路，不冒充账号、画像或推荐链路通过。
+
+Chrome 的 CUA 查询仍超时，但 OpenCLI 桥接一度恢复可用，完成指定授权视频的单次 **CDP 真实鼠标点击（isTrusted=true）**。点击前白色未收藏，点击后金色；打开同 URL 没有新文档，未作为证明；随后执行真正 reload，确认页面内探针已消失、新文档 complete 后又是白色未收藏。仍 **FAIL**，因此不能只归因为 DOM 合成点击，也不能宣称代理补丁修复了站内收藏。未取消收藏或重放上游请求。
+
+同一 Chrome 会话用真实菜单进入 `/setting`，账号、隐私、广告、屏幕时间等栏目已加载，仍没有观看历史/活动中心入口。历史仍 **FAIL**。非空画像、周期增量仍 **BLOCKED**。本轮稍后读取网络诊断超时、Instagram 首次渲染检查连接中断；桥接复查恢复后，只读重试确认 Instagram 文档 complete、正文已渲染、21 个交互控件。未认定登录态采集或真实来源 E2E 通过。无需用户重复此前的手动点击对照。
+
+验证：路由与相邻套件 **125 passed**；认证、发现、图片边界、Instagram 契约、TikTok 初始化/增量/任务及配置套件 **848 passed / 37 skipped**；文档索引 **5 passed**；Ruff、MyPy（318 文件）通过。扩展源码/权限/安装包未改，不重复构建；未重跑全量 pytest，不改写此前两项失败。没有新增模块依赖、接口配置项或数据流，模块文档与 changelog 已同步。两个临时浏览器会话已释放，页内探针在真正刷新时已移除；未创建后端/诊断服务，未保存 Cookie、原始 DOM 或网络返回体。[脱敏证据](testing/assets/2026-10-13-tiktok-proxy/real-e2e.json)。
+
 ## 2026-10-13 只读续验
 
 用户要求继续处理后，基于 `d0fbabc5` 重建隔离正常后端，真实模型/network 配置不变、所有自动写入与周期同步保持关闭。Chrome 浏览器可枚举但标签页查询仍超时，无法完成真实鼠标点击对照；项目扩展的 WebSocket 和登录态同步正常。

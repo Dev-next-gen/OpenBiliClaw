@@ -409,6 +409,8 @@ embedding_progress.reset()
 
 ### Image Proxy API
 
+TikTok 的 curl_cffi 图片传输通过 `network.curl_cffi_proxy_kwargs()` 物化 OS/环境代理，并在 direct/custom 模式覆盖 libcurl 环境继承与 NO_PROXY；每跳仍保留 CONNECT_TO 公网地址固定、原始 Host/SNI 和 TLS 校验。Instagram 继续使用上述共享海外图片传输。
+
 `runtime.image_network.resolve_public_addresses(host, *, proxy=None)` 在每次请求及重定向前进行最长 5 秒 DNS 解析；任何 loopback/private/link-local/reserved/multicast、IPv4 映射或 IPv6 过渡地址都会拒绝，混合公网/内网答案也整体拒绝。仅允许标准 HTTPS 443。`ImageTransport` 使用 HTTPCore 的公开 `AsyncNetworkBackend` 接口固定已验证的数字地址，无第二次目标域名解析，HTTP Host 和 TLS server name 始终为原始 CDN；证书校验不关闭。代理只作为可信传输，CONNECT/SOCKS5 发送数字 IP，代理认证只用于隧道握手。每 hop 重算 CN-direct 或海外 `[network]` direct/system/custom 策略，不能跨域重定向继承错误出口。
 
 直连使用本机 DNS；实际选用代理的海外 CDN 通过同一代理向固定、正常 TLS 校验的 `https://1.1.1.1/dns-query` 查询 A/AAAA，避免本机 fake-IP/污染答案破坏数字 IP 隧道。仅发送公开 CDN 域名，不发送账号、Cookie、原 URL path/query 或签名。每响应最多 64 KiB，不跟随重定向，校验 Question/Status/答案后再固定地址；DoH 不可达或答案不安全时 fail closed，不降级为未验证域名 CONNECT。额外 DNS 数据流及 Cloudflare 服务依赖见[隐私政策](../privacy.md)。

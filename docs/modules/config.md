@@ -710,6 +710,8 @@ iframe 打开笔记页（单任务最多 5 条、并发 2），读取 `__INITIAL
 | `mode` | string | `"system"`（v0.3.175 起；此前为 `"direct"`） | `system` 继承 `HTTP(S)_PROXY` / OS 代理（macOS 还含系统偏好设置里的代理）；`direct` 显式忽略环境 / 系统代理；`custom` 只使用下方 `proxy` |
 | `proxy` | string | `""` | `custom` 模式的代理 URL。支持 `http://` / `https://` / `socks5://` / `socks5h://`，如 `"socks5://127.0.0.1:1080"` |
 
+**TikTok / Instagram 海外路由**：TikTok 后端 Web API、登录验证与封面使用上述默认 `system` 策略。curl_cffi 会话显式物化 macOS/环境代理，不依赖 libcurl 自行发现系统设置；显式 `direct` 不继承环境代理，`custom` 不被环境 NO_PROXY 覆盖。Instagram 的采集，以及 TikTok 的本人列表/站内收藏由浏览器发出，沿用浏览器/系统代理；后端的海外网络选项不能替 Chrome 切换出口。Instagram 封面由后端共享图片代理按本节配置请求。没有配置任何系统/环境代理时，`system` 不会凭空创建代理。
+
 > 与 `[bilibili].proxy` 的区别：`[network].proxy` 是「海外出口」，`[bilibili].proxy` 是「B站专用」，两者语义相反、互不影响。
 >
 > **国内直连隔离**：B站 / 抖音 / 微博 / Ollama / 国内 CDN 图片缓存等所有 `trust_env=False` 客户端**永远不使用**此代理（继承代理曾触发 B站 风控，`df626f3f`）。该隔离由 `tests/test_network_proxy_isolation.py` 与微博 client 测试守卫。

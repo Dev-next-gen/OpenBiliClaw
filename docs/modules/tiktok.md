@@ -113,7 +113,7 @@ TikTok 加入七平台扩展保存矩阵（`docs/modules/saved-sync.md`）：本
 | 后台 discovery producer | ✅ | `TiktokDiscoveryProducer` 镜像 YouTube producer：`tiktok_discovery_runs` 每日执行 ledger、`min_interval_minutes` 节流、`daily_feed_budget` / `daily_tag_budget` / `daily_user_budget`、pool 缺口门、统一 candidate pipeline 入队 |
 | 平台族注册 | ✅ | `tiktok` 独立平台族（`requires_overseas_network=True`、`routed_by_network_mode=True`、host `tiktok.com`） |
 | source-auth 契约 | ✅ | `auth_tiktok()` 可选凭据语义：无 Cookie 时与 YouTube 同形（公开源 · 无需登录，`verify_method="none"`）；配置 Cookie 后 `credential="present"` + `verify_method="live_probe"`（passport beat 探针）；capability map（`_TIKTOK_CAPABILITY_AUTH_MODES`）逐能力区分 discover（optional-credential，访客就绪）与 profile / bootstrap / incremental / native-save（login-required，随同步 Cookie + 探针 verdict 投影 ready / stale / login_required / unverified），guided init 据此做 bootstrap 准入 |
-| 站内收藏（native save） | ✅ | `ExtensionAdapterDefinition("tiktok", ...)` 注册进七平台 broker；`extension/src/content/native-save/tiktok.ts` 在已登录标签页执行收藏（目标 `TikTok Favorites`，watch-later 回退 favorite）；自动同步默认关闭，真实写入需精确命名授权；真实受控 E2E 待人工授权运行 |
+| 站内收藏（native save） | ✅ | `ExtensionAdapterDefinition("tiktok", ...)` 注册进七平台 broker；`extension/src/content/native-save/tiktok.ts` 在已登录标签页执行收藏（目标 `TikTok Favorites`，watch-later 回退 favorite）；自动同步默认关闭，真实写入需精确命名授权；已获指定视频授权；真实受控 E2E 未通过，刷新后未持久保存，见最新验收台账 |
 | 关键词规划器接入 | ✅ | `tiktok` 加入 `_PLANNER_PLATFORMS`；claim 的词优先喂 `tiktok_search`（原词不压缩，search 挂载时），未挂载时喂 `tiktok_tag`（压缩为 hashtag）；used/failed 生命周期跟随实际消费词的策略（P1.7），P1.8 keyword id 随候选传递 |
 | 头图 CDN 白名单 | ✅ | `tiktokcdn.com` / `tiktokcdn-us.com` / `tiktokcdn-eu.com` 进入 image_cache 头图白名单，走 `[network]` 海外路由（与 i.ytimg.com 同构，不进 CN 直连名单）；真实 For-You 封面经代理抓取 200 实测通过 |
 | `discover --source tiktok` CLI | ✅ | 手动触发正式 `TiktokDiscoveryProducer`（`enabled_override` 旁路 daemon 总开关，镜像 douyin 分支形态） |
@@ -174,7 +174,8 @@ result = await producer.produce_if_due(limit=20)
 
 - producer 对每个 strategy 的 raw items 调 `enqueue_candidates(..., source_context="tiktok_feed" / "tiktok_tag" / "tiktok_user")`，再由共享 pipeline 混源 batch 评估入池；API 装配会把评估所有权交给 `CandidateEvalCoordinator`。
 - 返回 payload 的 `discovered` 是本轮入队候选量，不等同于可立即推荐的池内数量。
-- TikTok 在海外；`[network].mode = "direct"` 时国内通常直连超时，设置页会渲染后端统一的海外网络提示。
+- TikTok 默认跟随 `[network].mode = "system"` 海外代理。Web API 与登录探针的 curl_cffi 会话显式读取 OS/环境代理（含 macOS 系统代理）；`direct` 用空 scheme 映射关闭 libcurl 环境继承，`custom` 固定代理并清除环境 NO_PROXY 绕过。封面沿用同一适配器；浏览器账号采集和站内收藏仍由 Chrome 自己的代理设置决定。
+- `network.curl_cffi_proxy_kwargs(proxy)` 接受 `None`（OS/环境）、空串（直连）或 URL（固定代理），返回会话 kwargs；不改变全局环境、系统代理或 TLS 校验。`[network].mode = "direct"` 时国内通常直连超时，设置页会渲染后端统一的海外网络提示。
 
 ## 配置项
 

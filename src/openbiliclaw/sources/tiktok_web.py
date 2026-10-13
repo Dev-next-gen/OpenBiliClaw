@@ -192,7 +192,7 @@ class TiktokWebIdentity:
 
     request_state: TiktokRequestState | None = None
     user_agent: str = DEFAULT_USER_AGENT
-    # Proxy policy mirrors the yt-dlp backend: ``None`` = inherit environment
+    # Proxy policy mirrors the yt-dlp backend: ``None`` = inherit OS/environment
     # (system mode), ``""`` = force direct, a URL = pin that proxy.
     proxy: str | None = None
     login_cookie: str = ""
@@ -224,10 +224,9 @@ class TiktokWebIdentity:
             return self.session_factory()
         from curl_cffi import requests as crequests
 
-        kwargs: dict[str, Any] = {}
-        if self.proxy is not None:
-            kwargs["proxy"] = self.proxy
-        session = crequests.Session(**kwargs)
+        from openbiliclaw.network import curl_cffi_proxy_kwargs
+
+        session = crequests.Session(**curl_cffi_proxy_kwargs(self.proxy))
         session.headers.update(
             {
                 "User-Agent": self.user_agent,
