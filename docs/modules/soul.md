@@ -14,7 +14,7 @@
 - **InsightAnalyzer** — 基于觉察、偏好和画像生成洞察假设；合并同名假设时按 `user_verdict` 决定置信度走向（见下「假设置信度与用户判断」）
 - **DialogueInsightAnalyzer** — 从聊天中提取候选长期理解信号
 - **ToneProfile** — 从画像、偏好和近期反馈推断语气风格，用于推荐、画像总结和对话；`[soul] reply_style`（issue #255）可在语气块追加一行自由文本指令，`[soul] dialogue_tone_prompt` 可整体替换对话 prompt 的语气块（仅对话，其余 prompt 不受影响），两者为空时 prompt 均逐字节不变
-- **SocraticDialogue** — 苏格拉底式用户对话，通过追问深化理解
+- **SocraticDialogue** — 需求优先的用户对话，在用户主动探索时通过有限追问深化理解
 - **AvoidanceSpeculator** — 主动确认用户可能想避开的内容方向
 - **SoulProfile** — 用户灵魂画像数据结构
 
@@ -55,7 +55,7 @@
 | SocraticDialogue.respond() | ✅ | 通过 LLMService 调用 LLM，自动注入画像；同一 dialogue 实例逐轮串行执行普通与工具调用，用户 turn 在真实回复完成前仅为临时历史，异常/取消只回滚本轮且不触发学习 |
 | Agent 显式聊天笔记 | ✅ | 通过 LLMService.memory 读取有界 agent_notes，仅 chat 且角色允许 read_memory 时加入 user 引用；原消息、system 与学习载荷不变 |
 | Agent 表达风格 | ✅ | `stream_agent_reply(persona_id=...)` 为 chat scope 叠加已冻结的表达模板；natural、legacy 与非 chat 保持原 prompt，风格不更改学习输入或权限 |
-| SocraticDialogue.stream_agent_reply()（M2） | ✅ | 多跳 agent loop 的对话侧入口（`POST /api/chat/agent/stream` 调用）：在 `_respond_lock` 下与 `respond()` 串行，复用共享朋友人设与长期记忆，采用按当前请求调整深度的聊天风格（简单问题简答、复杂任务充分展开，访谈追问由 skill 决定）；显式 `session_id` 的短期历史按会话隔离，首次使用从本会话 durable rows 恢复；`dialogue_binding` 同时用于 prompt 和学习冻结锚；user turn 先 append（loop 异常/空答复回滚本轮且不触发学习），完成后 append agent 答复并按 learning mode 走与 `respond()` 相同的 `_queue_dialogue_learning()` 提交（queued / legacy_direct / reply_only_test 语义一致） |
+| SocraticDialogue.stream_agent_reply()（M2） | ✅ | 多跳 agent loop 的对话侧入口（`POST /api/chat/agent/stream` 调用）：在 `_respond_lock` 下与 `respond()` 串行，复用共享朋友人设与长期记忆，采用按当前请求调整深度的聊天风格（简单问题简答、复杂任务充分展开，追问遵循共享收敛规则，访谈由用户探索意愿触发）；显式 `session_id` 的短期历史按会话隔离，首次使用从本会话 durable rows 恢复；`dialogue_binding` 同时用于 prompt 和学习冻结锚；user turn 先 append（loop 异常/空答复回滚本轮且不触发学习），完成后 append agent 答复并按 learning mode 走与 `respond()` 相同的 `_queue_dialogue_learning()` 提交（queued / legacy_direct / reply_only_test 语义一致） |
 | SocraticDialogue.respond_stream()（issue #83） | ✅ | `respond()` 的流式变体：逐 token yield 回复增量（`LLMService.stream_socratic_dialogue()`），历史追加 / 回滚 / 学习语义与 `respond()` 完全一致；工具回合保持一次性工具流、最终回复作为单个 delta 吐出；service 缺少流式方法时回退一次性 `complete_socratic_dialogue()`。CLI `chat` 与 legacy `/api/chat/stream` 均走此路径 |
 | 对话内链接摄入（issue #83，`sources/link_ingest.py`） | ✅ | `SocraticDialogue` 可选接收 `LinkIngestor`；`respond()`、`respond_stream()` 与 `stream_agent_reply()` 在 user turn append 后、LLM 调用前对消息做链接预处理：提取 URL（无 `://` 快速短路）→ 展开 b23.tv / xhslink.com 短链（跟随重定向，8s 超时 + 256 KiB 上限 + 非 HTML 拒绝，httpx 一律 `trust_env=False`）→ 按 `sources/platforms.py` 注册表识别平台（bilibili 复用 `BilibiliAPIClient.get_video_info` 拿标题/简介/UP 主/标签，其余平台抓 title/description/og 元数据）→ 摘要块注入当轮 prompt（历史与审计仍存用户原文，仅靠 `relation_prefix` 让后续轮次知道「分享了链接《…》」），并把每个抓取成功的链接经注入的 `event_sink`（生产 = `MemoryManager.propagate_event`）记为 `share` 事件（显式正向偏好，默认强度 0.85，用户消息摘录进 `comment_text`）。单链接失败降级为「仅链接」形态进上下文，事件写入失败只记 WARNING，绝不阻塞聊天；未接 ingestor 时 prompt 逐字节不变 |
 | ProfileBuilder 历史抽样（2026-07-26+） | ✅ | `_summarize_history` 不再按到达顺序切`titles[:100]` / `contexts[:100]` / `recent|older[:50]`——真实拉取顺序是最新在前，1000 条历史里模型只看得到最近约 100 条，再久的长期兴趣无论互动多强都不可见（实测生产数据：旧法只覆盖**最近 0.6 天**，且漏掉了全量里唯一一条收藏）。现按「强信号保底 + 时间分层」抽样，与增量链路同源判据：① 权重复用满意度语义——明确互动（收藏/点赞/投币…）3.0 > 高完播 2.0 > 一般 1.0 > 划走 0.3（不归零，划走也是信号）；② 先用 `_HISTORY_STRONG_RESERVE=0.4` 的预算无条件收下明确互动（避免一段时间内集中的收藏被其他时间桶的配额挤掉，与「疑惑被高置信假设埋掉」同类问题），余额再按 `_HISTORY_TIME_BUCKETS=6` 个时间桶均摊，薄桶剩余配额回流给最有代表性的行为；③ 输出按时间排序，`count` 仍报真实总量并附 `sampling_hint` 告知模型这是抽样。无有效时间戳（超过半数缺失）时退回到达顺序，不丢数据。**未改动**：`analyze_events` 的偏好分片仍是 `events[i:i+200]` 全量覆盖，init 的觉察/洞察（`_init_cognition_context`）也无截断——截断问题只存在于画像构建的历史摘要这一处 |
@@ -988,7 +988,7 @@ queue/guard。每个 `SocraticDialogue` 实例用独立异步锁串行执行完�
 
 `respond(..., session="")` 可逐请求覆盖 UI ownership 标签；认知 history 仍跨 session 共享。`local_timezone` 与测试用 `now_provider` 固定历史时间事实，公开 `format_dialogue_turn_timestamp(timestamp, local_timezone=...)` 将 SQLite 的无时区 UTC 或带 offset 时间统一渲染为 `[MM-DD HH:mm]`，不读取当前时钟。
 
-`stream_agent_reply()` 使用 `build_socratic_dialogue_prompt(..., socratic=False)`，移除所有角色共享的强制追问；简单问题直接回答，必要澄清与所选访谈角色的探索保留。最近 20 轮历史作为一份明确标注的 JSON 引用记录进入上下文，原角色、原正文、本地时间和回复目标分字段保存，不再把系统时间前缀拼到历史 assistant 消息上作为回答示范。已有历史中泄露的标签仍保留在原文中，时间问答和明确引用不丢信息；不清洗模型输出或修改数据库。该选择不增加分类模型调用、不缩减复杂任务预算，旧 `respond()` 的历史格式与默认苏格拉底式风格保持。
+`stream_agent_reply()` 使用 `build_socratic_dialogue_prompt(..., socratic=False)`，提供按需深度风格；新旧入口同时共享 `build_socratic_dialogue_prompt()` 的收敛规则：明确需求直接回应，普通需求默认最多澄清一轮，主动探索连续两轮提问后总结并等待用户继续。信息足够即可结束，不以画像完整为继续追问的理由。最近 20 轮历史作为一份明确标注的 JSON 引用记录进入上下文，原角色、原正文、本地时间和回复目标分字段保存，不再把系统时间前缀拼到历史 assistant 消息上作为回答示范。已有历史中泄露的标签仍保留在原文中，时间问答和明确引用不丢信息；不清洗模型输出或修改数据库。该选择不增加分类模型调用、不缩减复杂任务预算，旧 `respond()` 的历史格式保持，但同样遵循共享收敛规则；其苏格拉底式探索仅在用户主动要求时使用。
 
 `stream_agent_reply()` 在构建本轮上下文时读取 `LLMService.memory.render_agent_notes_prompt()`，
 仅 chat scope 且角色可 read_memory 时作为 user 引用加入；每轮重新读取，因此笔记
