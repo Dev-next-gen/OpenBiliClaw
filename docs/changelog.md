@@ -4,6 +4,8 @@
 
 ## 未发布：TikTok 源后端缺口修复与前端展示面补全（issue #88）
 
+- TikTok 首版合并收尾：同步主线 v0.3.228 与动态日期测试修复，保留发现推荐已验收、收藏暂缓的范围；非空账号画像/周期增量及 Firefox 安装验收转由 #295 跟踪。未发布新版本。
+
 - TikTok 全面复核：受测提交四项 CI 全绿（10316 passed），本地后端 426、手机 62、扩展 1814 项通过，真实发现/模型/推荐和桌面/手机展示续验通过。站内收藏按用户要求暂缓；非空真实画像/周期增量、Firefox 安装验收仍单列未完成，不宣称 full contract 通过。
 
 - TikTok 10 月 14 日已通过既有本地 reload 入口真正部署请求完成等待补丁，正式收藏仍未持久化；键盘入口请求 HTTP 200/业务状态 0 后刷新仍丢失，passport 会话验证有效，新安装包三 scope 均明确空态。补安装摘要与脱敏证据，非空画像/真实周期增量继续保留验收缺口。
@@ -120,11 +122,27 @@
 - 新增 `tiktok_tag` / `tiktok_user` discovery 策略与 `TiktokDiscoveryProducer`（镜像 YouTube producer：每日执行 ledger、节流、pool 缺口门、统一 candidate pipeline、关键词规划器 P1.7/P1.8 生命周期）；`[scheduler.pool_source_shares]` 增加 `tiktok` 配额。
 - `tiktok` 从 douyin 平台族别名拆分为独立平台族（`requires_overseas_network=True`），source-auth 契约按公开源接入（无需登录），API config / status / credentials 面同步覆盖。
 
-## v0.3.227：macOS 正式签名与 Instagram 实验性来源（2026-10-06）
+## v0.3.228：画像门控大幅降本与安装包信任修复（2026-10-13）
+
+- 修复 macOS 打包在 Apple stapler 抖动下无重试：`staple_macos_artifact` 的 staple/validate 此前单次调用即失败，而 Apple ticket-delivery 端点会间歇断连（v0.3.228 x64 连续三次 exit 68，公证本身已 Accepted）；现两个动作各自重试 3 次（10s/20s/30s 退避），与 hdiutil 创建路径一致。
+
+- 修复 macOS 桌面发布构建的 bge-m3 digest allowlist 漂移：macOS 任务此前下载 `ollama/releases/latest` 的 Ollama.app，新版客户端 pull 到的 manifest 多出一层嵌套 manifest blob（内容为引用同一 config/model/license 的包装清单，已核实），触发 `make_model_seed` 防漂移护栏失败；Windows 任务一直固定在 0.32.13 无此问题。现将 `release-desktop.yml` 与 `build-installers.yml` 的 macOS Ollama 统一定位到 v0.32.13，两平台客户端行为一致。
+
+- 修复 posture gate soul_rebuild 负载未按 spec 实现为 diff 摘要（#288）：`_gate_soul_rebuild` 的判定快照此前把完整兴趣列表逐字节传两遍（before + after），单条兴趣中四个 ISO 时间戳字段占 55% 字节却对判定无用，实测单次输入高达 13 万～15 万 tokens。现改为 `_interest_rebuild_diff()` 生成的 compact diff 摘要（added/removed/changed + 计数，条目仅保留 name/category/weight/evidence_count），与 spec 接入点③「rebuild diff 摘要过门控」一致；confirmed_hypotheses 触发源前后快照相同，diff 为空、信号由 context 承载。真实 provider 端到端实测单次输入 41,149 → 4,221 tokens（降约 90%），shadow 默认模式调用方零延迟不变。
+
+- 修复 Windows 安装包被 Kaspersky 查杀（#281）：移除打包流程中对随包 `ollama.exe` 及 `lib/ollama` runner 的 PE 子系统改写步骤（`release-desktop.yml` / `build-installers.yml`），并删除 `packaging/patch_pe_subsystem.py` 及其测试。该改写使 Ollama 官方 Authenticode 签名失效（`TRUST_E_BAD_DIGEST`），被杀软按「已签名但被篡改」报 `HEUR:Trojan.Win64.Generic`；上游 ollama 自 PR #8668 起已用 `CREATE_NO_WINDOW` 启动 runner，配合 supervisor 启动 `ollama serve` 时的 `CREATE_NO_WINDOW`，不再弹控制台窗口，无需改二进制。两个 workflow 在编译安装包前新增 `Get-AuthenticodeSignature` 验签门禁，随包 exe 签名失效即构建失败，防止同类回归。同时将 `packaging/openbiliclaw.spec` 的 UPX 压缩关闭（`upx=False`），避免本地构建产出更易被误报的 UPX 壳 bootloader。
+
+- 聊一聊按“允许有限追问，不能无限追问”的用户澄清标准完成真实多轮验收：桌面/移动 Web、HTTP/SSE、重启恢复与 CLI 共 20 次回复，未复现无休止追问；18 个 durable 回合全部完成。实测触发主备模型降级，可选尾问仍存在；不是单模型或四端真机全面保证，详见[验收记录](testing/2026-10-14-chat-followup-e2e.md)。
+
+- 聊一聊统一新旧入口与内置角色的收敛规则：明确需求直接回应，模糊但可做先给结果，普通需求默认最多澄清一轮；主动探索连续两轮提问后总结，用户想停或让系统决定时不再追问。口味探寻师移除执着深挖动机的指令，暂时偏好保留时间范围。规则在现有模型调用中生效，不增加分类调用或修改工具权限；为提示词约束，非硬计数器。真实模型仍偶发附加追问；早期“零附加问题”的严格样本未通过，后续按用户确认的“允许有限追问、必须收敛”标准完成验收，见[最新记录](testing/2026-10-14-chat-followup-e2e.md)。
 
 - 修复一条脏候选拖死整批评估（#284）：B 站简介等来源文本夹带 ASCII 控制字符时，`build_canonical_evaluation_batch` 的 wire 校验对整批抛错，重试烧完 50 次 `batch_eval_attempts` 后全批进 `failed_eval`。现新增 `_sanitize_wire_text()`，在构建 canonical 评估批的边界剥除 `\t \r \n` 之外的 C0 控制字符与 DEL、替换孤立代理项，清洗后为空的 tag 条目丢弃、整字段为空则省略；清洗只作用于发给 LLM 的 wire 副本，存储行保留原文，wire 校验器对 LLM 响应侧保持严格。已死信的历史候选由评估协调器启动时既有的 `revive_failed_eval_candidates` 自动复活，复活后经清洗即可正常评估。
 
-- 修复 Windows 安装包被 Kaspersky 查杀（#281）：移除打包流程中对随包 `ollama.exe` 及 `lib/ollama` runner 的 PE 子系统改写步骤（`release-desktop.yml` / `build-installers.yml`），并删除 `packaging/patch_pe_subsystem.py` 及其测试。该改写使 Ollama 官方 Authenticode 签名失效（`TRUST_E_BAD_DIGEST`），被杀软按「已签名但被篡改」报 `HEUR:Trojan.Win64.Generic`；上游 ollama 自 PR #8668 起已用 `CREATE_NO_WINDOW` 启动 runner，配合 supervisor 启动 `ollama serve` 时的 `CREATE_NO_WINDOW`，不再弹控制台窗口，无需改二进制。两个 workflow 在编译安装包前新增 `Get-AuthenticodeSignature` 验签门禁，随包 exe 签名失效即构建失败，防止同类回归。同时将 `packaging/openbiliclaw.spec` 的 UPX 压缩关闭（`upx=False`），避免本地构建产出更易被误报的 UPX 壳 bootloader。
+- 修复 `test_legacy_duplicate_keeps_selected_temporal_evidence_publication_as_one_group` 时间炸弹：测试硬编码 `published_at='2026-08-11'` 并断言迁移后 `pool_status='fresh'`，但该日期随现实时间越过 `current` 时效类 60 天 admission TTL（2026-10-10 起）后迁移正确重算为 `temporal_review_hold`，CI 开始失败。改为动态生成「7 天前」时间戳，测试意图（近期 current 证据 → fresh）与时间解耦。
+
+- v0.3.228 发布回执已归档：Chrome / Firefox AMO 已提交待审核，macOS arm64/Intel 与 Windows 安装包、双架构 Docker 镜像已发布；Gitee 源码同步，国内二进制镜像仍待上传。桌面标签因打包修复指向 `92d4f39f`（仅工作流/打包差异），详见 [发布记录](testing/2026-10-13-release-0.3.228.md)。
+
+## v0.3.227：macOS 正式签名与 Instagram 实验性来源（2026-10-06）
 
 - v0.3.227 发布回执已归档：Chrome / Firefox 已提交待审核，正式签名的 Mac 与 Safari 安装包、Windows 安装包和双架构 Docker 镜像已发布；Gitee 源码同步，国内二进制镜像仍待上传。详见 [发布记录](testing/2026-10-06-release-0.3.227.md)。
 
