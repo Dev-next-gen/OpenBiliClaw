@@ -16,6 +16,8 @@
 
 - 修复 `test_legacy_duplicate_keeps_selected_temporal_evidence_publication_as_one_group` 时间炸弹：测试硬编码 `published_at='2026-08-11'` 并断言迁移后 `pool_status='fresh'`，但该日期随现实时间越过 `current` 时效类 60 天 admission TTL（2026-10-10 起）后迁移正确重算为 `temporal_review_hold`，CI 开始失败。改为动态生成「7 天前」时间戳，测试意图（近期 current 证据 → fresh）与时间解耦。
 
+- v0.3.228 发布回执已归档：Chrome / Firefox AMO 已提交待审核，macOS arm64/Intel 与 Windows 安装包、双架构 Docker 镜像已发布；Gitee 源码同步，国内二进制镜像仍待上传。桌面标签因打包修复指向 `92d4f39f`（仅工作流/打包差异），详见 [发布记录](testing/2026-10-13-release-0.3.228.md)。
+
 ## v0.3.227：macOS 正式签名与 Instagram 实验性来源（2026-10-06）
 
 - v0.3.227 发布回执已归档：Chrome / Firefox 已提交待审核，正式签名的 Mac 与 Safari 安装包、Windows 安装包和双架构 Docker 镜像已发布；Gitee 源码同步，国内二进制镜像仍待上传。详见 [发布记录](testing/2026-10-06-release-0.3.227.md)。
