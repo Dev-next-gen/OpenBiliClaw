@@ -6,7 +6,7 @@
 
 - README 中英文与项目首页突出 Instagram/TikTok 新来源，补齐首页首屏、搜索/分享摘要和连接指引；区分 Instagram 已发布、TikTok main 已合入待发版，保留默认关闭、代理要求及账号验收限制。
 
-- query inspiration 新增可选 `parallel` grounding 后端，通过免费匿名 Parallel Search MCP 获取标题、URL 与摘录；默认后端顺序不变，沿用现有网络策略、限时和失败回退。
+- query inspiration 新增可选 `parallel` grounding 后端，通过免费匿名 Parallel Search MCP 获取标题、URL 与摘录；默认后端顺序不变，沿用现有网络策略、限时和失败回退。V2EX 正式 search 的外部召回白名单同步接纳 `parallel`，配置后 `site:v2ex.com/t` 召回同样可走该后端。
 
 - TikTok 首版合并收尾：同步主线 v0.3.228 与动态日期测试修复，保留发现推荐已验收、收藏暂缓的范围；非空账号画像/周期增量及 Firefox 安装验收转由 #295 跟踪。未发布新版本。
 

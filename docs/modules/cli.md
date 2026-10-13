@@ -1580,7 +1580,7 @@ openbiliclaw discover-v2ex-hot --limit 10
 openbiliclaw discover-v2ex-latest --limit 10
 ```
 
-正式来源补货使用 `openbiliclaw discover --source v2ex`。该命令要求 `[sources.v2ex].enabled=true`，使用 `search / node / tab / hot / latest` 配置和共享候选 pipeline；PAT 配置后会优先使用 API 2.0，401/403 自动回落匿名。`search` 优先复用已配置的 Exa / You provider 做 `site:v2ex.com/t` 召回，再用官方 Topic 详情补全；provider 不可用时回退 latest/hot，先做整句精确匹配，再对 planner 长词做最多 8 个非通用核心词的有界匹配。Search provider 是否启用不受 legacy / hybrid / inspiration 关键词生成模式影响。所有 V2EX 结果都是 Topic 文字卡，Reply 不单独进入候选池；浏览器登录态仅用于四个只读 bootstrap / incremental scope，不参与公开 discovery 鉴权。
+正式来源补货使用 `openbiliclaw discover --source v2ex`。该命令要求 `[sources.v2ex].enabled=true`，使用 `search / node / tab / hot / latest` 配置和共享候选 pipeline；PAT 配置后会优先使用 API 2.0，401/403 自动回落匿名。`search` 优先复用已配置的外部搜索 provider（`bing_rss` / `exa` / `you` / `serply` / `parallel`）做 `site:v2ex.com/t` 召回，再用官方 Topic 详情补全；provider 不可用时回退 latest/hot，先做整句精确匹配，再对 planner 长词做最多 8 个非通用核心词的有界匹配。Search provider 是否启用不受 legacy / hybrid / inspiration 关键词生成模式影响。所有 V2EX 结果都是 Topic 文字卡，Reply 不单独进入候选池；浏览器登录态仅用于四个只读 bootstrap / incremental scope，不参与公开 discovery 鉴权。
 
 ### `openbiliclaw search-douyin`
 
