@@ -305,6 +305,13 @@ background ─ background admission (default 3) ──────┘
              └─ maintenance: at most 1 while refill waits;
                 parked when canonical available = 0
 
+TikTok cookie sync: validated effective credential change → runtime lane handoff → refreshed search client
+TikTok account tasks: enabled policy (startup / reload) -> bootstrap_profile(likes, favorites, following; history optional)
+                      → inactive owned tab → durable scope acceptance ACK → viewer-owned active list only
+                      → bounded durable scope results / same-account fence
+                      → staged canonical result → account-scoped event receipt → profile
+TikTok native save: local membership → durable broker → exact current video → selected bookmark → reload/read-only persisted proof
+
 guided init: signals → preferences → full profile commit
                                   → discovery → evaluation → copy → canonical pool ready
                                   → terminal → runtime schedules optional probes

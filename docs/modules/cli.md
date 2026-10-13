@@ -867,6 +867,7 @@ X (Twitter) 与其它平台不同：init 阶段**没有 bootstrap 导入任务**
 - `--yes-xhs` / `--no-xhs`：跳过小红书交互式提问，直接启用或跳过。
 - `--yes-douyin` / `--no-douyin`：跳过抖音交互式提问，直接启用或跳过。交互式提问默认 No；非交互式终端默认跳过抖音，脚本化 init 应显式传其中一个。
 - `--yes-youtube` / `--no-youtube`：跳过 YouTube 交互式提问，直接启用或跳过。交互式提问默认 No；非交互式终端默认跳过 YouTube，脚本化 init 应显式传其中一个。
+- `--yes-tiktok` / `--no-tiktok`：跳过 TikTok 交互式提问，直接启用或跳过。`--yes-tiktok` 会通过浏览器扩展任务桥默认采集点赞 / 收藏 / 关注（`tt_like` / `tt_collect` / `tt_follow`），观看历史为显式任务可选并纳入本轮首版画像；交互式提问默认 No，非交互式终端默认跳过，`OPENBILICLAW_NO_TIKTOK=1` 优先于 `--yes-tiktok`。
 - `--yes-x` / `--no-x`：跳过 X (Twitter) 交互式提问，直接启用或跳过。只翻转 `[sources.twitter].enabled`，不在 init 期间拉取数据；非交互式终端默认跳过 X，脚本化 init 应显式传其中一个。
 - `--yes-zhihu` / `--no-zhihu`：跳过知乎交互式提问，直接启用或跳过。`--yes-zhihu` 会执行 `bootstrap_events` 并把结果纳入本轮首版画像；非交互式终端默认跳过知乎，脚本化 init 应显式传其中一个。
 - `--yes-reddit` / `--no-reddit`：跳过 Reddit 交互式提问，直接启用或跳过。`--yes-reddit` 会执行 `bootstrap_events` 并把 saved / upvoted / subscribed 结果纳入本轮首版画像，同时开启后续 Reddit discovery；非交互式终端默认跳过 Reddit。
@@ -1690,3 +1691,7 @@ $ openbiliclaw db-repair
 ### TikTok 来源验收补全（2026-10-04）
 
 新增 `discover-tiktok --mode feed|tag|user|search --query TEXT --limit 1..20`：使用配置中的网络路线及可选 Cookie，在临时目录执行只读取数 smoke，不写生产候选/记忆/画像。正式 `discover --source tiktok` 支持 rate_limited、no_keywords 和 degraded 的真实状态提示。
+
+TikTok full-source 初始化在后台标签页顺序读取喜欢、收藏、关注三个默认 scope（网页历史可选）；默认等待 480 秒，覆盖扩展最多 360 秒绝对 deadline 和领取/回传余量，可用 `OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS` 调整。明确登录的空列表与登录失败分别显示，不再把未登录描述为 empty。
+
+TikTok 初始化的请求提示只列三个默认范围；结果摘要将无历史数据标为“默认不采集”，避免把未请求历史写成成功采集 0 条。

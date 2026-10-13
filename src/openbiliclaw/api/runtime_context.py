@@ -2026,6 +2026,7 @@ class RuntimeContext:
                 "reddit": _source_enabled("reddit"),
                 "linuxdo": _source_enabled("linuxdo"),
                 "v2ex": _source_enabled("v2ex"),
+                "tiktok": _source_enabled("tiktok"),
             },
             scheduler_config=new_config.scheduler,
             profile_ready=lambda: bool(new_soul_engine.is_profile_ready()),

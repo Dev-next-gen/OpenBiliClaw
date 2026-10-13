@@ -769,3 +769,85 @@ def test_tiktok_favorite_count_matches_collect_count():
     content = parse_tiktok_item(_item_struct())
     assert content is not None
     assert content.favorite_count == content.collect_count == 45
+
+
+# ---------------------------------------------------------------------------
+# Per-capability auth readiness (full-source upgrade)
+# ---------------------------------------------------------------------------
+
+
+def test_auth_tiktok_capability_modes_match_frozen_contract(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """Guest mode: discover is ready; every account capability is login-required."""
+    from openbiliclaw.api.source_auth.providers import auth_tiktok
+
+    monkeypatch.delenv("OPENBILICLAW_TIKTOK_COOKIE", raising=False)
+    contract = auth_tiktok(_auth_ctx(tmp_path))
+
+    capabilities = contract.capabilities
+    assert capabilities["discover"].mode == "optional-credential"
+    assert capabilities["discover"].ready is True
+    for name in ("profile", "bootstrap", "incremental", "native-save"):
+        assert capabilities[name].mode == "login-required"
+        assert capabilities[name].required is True
+        assert capabilities[name].readiness == "login_required"
+        assert capabilities[name].ready is False
+    assert capabilities["cookie-sync"].mode == "login-required"
+    assert capabilities["cookie-sync"].required is False
+
+
+def test_auth_tiktok_unverified_cookie_is_not_account_ready(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """A saved-but-unprobed cookie must not read as bootstrap-ready."""
+    from openbiliclaw.api.source_auth.providers import auth_tiktok
+
+    monkeypatch.setenv("OPENBILICLAW_TIKTOK_COOKIE", "sessionid=abc")
+    contract = auth_tiktok(_auth_ctx(tmp_path))
+
+    assert contract.capabilities["discover"].ready is True
+    assert contract.capabilities["bootstrap"].readiness == "unverified"
+    assert contract.capabilities["bootstrap"].ready is False
+
+
+def test_auth_tiktok_verified_cookie_marks_account_capabilities_ready(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """A fresh passport-beat verdict over the same cookie is the ready evidence."""
+    from openbiliclaw.api.source_auth.probe_cache import LIVE_PROBES
+    from openbiliclaw.api.source_auth.providers import auth_tiktok
+    from openbiliclaw.api.source_auth.write import credential_fingerprint
+
+    cookie = "sessionid=abc"
+    monkeypatch.setenv("OPENBILICLAW_TIKTOK_COOKIE", cookie)
+    LIVE_PROBES.clear("tiktok")
+    try:
+        LIVE_PROBES.record(
+            "tiktok",
+            authenticated=True,
+            detail="ok",
+            network_error=False,
+            fingerprint=credential_fingerprint("tiktok", cookie),
+        )
+        contract = auth_tiktok(_auth_ctx(tmp_path))
+    finally:
+        LIVE_PROBES.clear("tiktok")
+
+    assert contract.verification == "verified"
+    for name in ("profile", "bootstrap", "incremental", "native-save"):
+        assert contract.capabilities[name].readiness == "ready"
+        assert contract.capabilities[name].ready is True
+
+
+def test_tiktok_capability_readiness_helper_matches_contract(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    from openbiliclaw.api.source_auth.providers import (
+        auth_tiktok,
+        tiktok_capability_readiness,
+    )
+
+    monkeypatch.delenv("OPENBILICLAW_TIKTOK_COOKIE", raising=False)
+    ctx = _auth_ctx(tmp_path)
+    assert tiktok_capability_readiness(ctx) == auth_tiktok(ctx).capabilities

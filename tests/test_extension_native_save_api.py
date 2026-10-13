@@ -52,6 +52,15 @@ _NATIVE_CASES = {
         ),
         NativeSaveRoute("favorite", "favorite", "Reddit Saved"),
     ),
+    "tiktok": (
+        SavedItemInput(
+            "tiktok",
+            "7234567890123456789",
+            "https://www.tiktok.com/@creator/video/7234567890123456789",
+            "video",
+        ),
+        NativeSaveRoute("favorite", "favorite", "TikTok Favorites"),
+    ),
 }
 
 
@@ -396,6 +405,7 @@ def test_cross_slug_native_legacy_uuid_collision_mutates_neither_row(
         ("reddit", "items"),
         ("zhihu", "items"),
         ("yt", "items"),
+        ("tiktok", "videos"),
     ],
 )
 def test_owned_native_result_validates_before_touching_legacy_collections(

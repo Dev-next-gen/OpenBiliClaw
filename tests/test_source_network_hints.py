@@ -69,7 +69,8 @@ def test_overseas_platform_list_is_the_verified_one() -> None:
         "bangumi",
         "github",
         "instagram",
-        "youtube", "tiktok",
+        "youtube",
+        "tiktok",
         "twitter",
         "reddit",
     } == OVERSEAS_EGRESS_PLATFORMS

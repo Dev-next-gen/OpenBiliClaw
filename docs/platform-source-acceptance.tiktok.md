@@ -1,6 +1,247 @@
 # TikTok 来源验收报告
 
+## 2026-10-14 合并收尾与后续跟踪
+
+合并后本地验证：版本一致性、Ruff、MyPy（318 文件）通过；TikTok/账号/增量/代理/保存身份/主线画像门控与聊天相邻回归 **602 passed**；扩展 **1814 passed**；Chrome/Firefox 构建和各 22 项资源检查通过。最终主线 CI 单独运行，不用这些专项结果替代全量结论。
+
+用户确认按“来源首版可交付、收藏暂缓、非空账号/Firefox 真测保留缺口”的范围合回 main。#275 已先合并；#286 改为 main 目标并同步最新主线，最终合并状态以两个 PR 为准。保留主线 v0.3.228 版本、聊天跟进修复与 TikTok 未发布记录；保存身份测试中双方重复修复的动态日期统一采用主线“七天前”的时间无关 fixture，不改变产品逻辑。
+
+原来源需求 [#88](https://github.com/whiteguo233/OpenBiliClaw/issues/88) 在首版合并后关闭；收藏持久化、非空真实画像/周期增量、Firefox 安装验证集中跟踪 [#295](https://github.com/whiteguo233/OpenBiliClaw/issues/295)，不因关闭原需求而冒充全能力通过。本轮不发版、不改变生产增量开关或系统/浏览器代理。
+
+工作区清理前，对 TikTok 四个旧 worktree 的未提交文件、本地配置、数据和构建做权限受限的本地归档并逐文件校验；不将凭据或数据上传。Chrome 已加载的 extension 目录需原址保留，仅解除旧 Git worktree 注册；合并历史和回收步骤另存本地备份。其他功能分支与 worktree 不在此次清理范围。
+
+## 2026-10-14 全面复核：发现推荐可交付，完整账号能力保留缺口
+
+本轮范围 **audit-only**，受测提交 `41fb9e06be1dc8150808ed25f90c827bec10bec2`。用户明确暂缓站内收藏；本轮没有任何 TikTok 收藏、点赞或关注写入，上一轮收藏持久化失败仍保留，不能改写为 PASS 或能力 N/A。观看历史沿用此前用户确认的可选范围。此前等待手机 App 收藏对照的请求不再阻塞本轮独立验收。
+
+**结论：TikTok 的发现→评估→推荐及桌面/手机消费面可以作为首版交付；full contract 总体仍为 incremental only。** 本轮没有发现新的主要实现故障，但不能把缺少非空账号证据当成已通过。画像、周期增量与 Firefox 安装验证的限制如下；尚未合并或发布。
+
+| 验收项 | 结果与证据范围 |
+| --- | --- |
+| 最新受测提交全量 CI | 四项 SUCCESS：[run 38435896568](https://github.com/whiteguo233/OpenBiliClaw/actions/runs/38435896568)，后端 10316 passed / 131 skipped；包括 Windows 自启动、Firefox smoke build、引导初始化浏览器检查。后续文档提交的 CI 应独立查询。 |
+| 本地后端与代理/账号回归 | TikTok、bootstrap、周期同步、代理隔离等 426 passed；手机相关 62 passed；Ruff 通过、MyPy 318 文件通过。需要本机监听的测试在允许监听环境执行。 |
+| 扩展 | 全量 1814 passed / 0 failed；Chrome/Firefox 构建、类型检查及各 22 项资源检查通过。首次受限沙箱执行因本机监听权限失败，放开测试监听后重跑通过。 |
+| 真实发现/模型/推荐 | 沿默认 loader 的实际模型与 system 代理，真实发现 4、评估 4、入池 4、文案 4；embedding 768 维，推荐 API HTTP 200 返回 4 条且 TikTok 身份正确。使用隔离数据库、显式合成 science 兴趣与 ASGI API transport，不冒充真实账号画像或本轮正常 TCP 后端 E2E。 |
+| 桌面与手机展示 | 当前源码渲染本轮真实 DTO，封面经过真实下载路径。桌面 1440×1000 和手机视口 390×844 各展示 4 条，TikTok 标签、互动数据、4/4 封面正常，无横向溢出；桌面来源筛选选中，手机打开按钮新页指向对应 TikTok HTTPS 视频。fixture 不提供实时 WebSocket，重连错误不算正式后端故障，也不算实时流已验收；未用 fixture 写响应证明保存成功。 |
+| 登录与账号列表 | 沿用同日已安装正式包的真实证据：会话验证成功，喜欢/收藏/关注三范围明确 empty/complete。与 10 月 10 日的真实 Cookie 同步/登录搜索证据合并判断；本轮没有新凭据或上游写入。 |
+| 画像与周期增量 | 实现、调度接线、双重 opt-in、跨轮去重和非空 fixture 回归通过；真实账号没有可用非空信号，因此真实模型画像与后续非空增量仍未验收，生产周期同步没有开启。 |
+| Firefox | 构建及 CI smoke 通过；安装后真实账号流程 NOT_RUN。 |
+| 站内收藏 | 用户暂缓本次门禁；上轮实际失败保持为已知限制，不能宣称已修复。 |
+
+来源审计 **46 PASS / 14 MANUAL / 2 N/A / 0 MISSING** 仅证明注册齐全；14 个 MANUAL 是语义/真实环境核对提示，不等于 14 个新 bug，也不自动证明 full contract 通过。其余真实证据与失败历史保留在下文。
+
+[本轮脱敏汇总](testing/assets/2026-10-14-tiktok-acceptance/acceptance.json)、[真实管线结果](testing/assets/2026-10-14-tiktok-acceptance/pipeline.json)、[桌面截图](testing/assets/2026-10-14-tiktok-acceptance/desktop.png)、[手机截图](testing/assets/2026-10-14-tiktok-acceptance/mobile.png)。专用浏览器与展示服务验收后关闭；生产配置、数据及已安装插件没有变动。本轮只补验收文档，无接口、模块、配置、安装流程或架构变化。PR #286 仍叠在 #275 上，合并顺序为 #275 → #286；不以本报告替代合并后检查或发布验证。
+
+## 2026-10-14 正式修复包热加载与输入方式对照
+
+修复前最后一个实际安装包没有请求完成等待补丁。本轮使用既有本地 `POST /api/extension/reload`：在正常 `create_app` 隔离后端确认扩展连接，核对注册目录的 manifest 与修复分支完全一致、保留其已有未提交改动，只更新重新构建后不同的 TikTok bundle、source map 和类型声明。reload 返回 delivered=true，扩展重连 presence=1。此后正式 native-save 通过新建任务页加载本轮构建，返回 **failed / native_confirmation_not_observed**；前文「时序修复未热加载」的当前状态至此解除，但持久化仍未通过。
+
+对原授权猫咪视频检查输入差异：真实 CDP 内层按钮点击 1 次未观察到选中/目标请求；确认仍未选中后，外层无障碍控件 Enter 1 次触发网页自然发出的精确目标 `action=1` 收藏 POST，HTTP 200、业务状态 0，图标变金色。临时被动诊断仅提取数值状态，不改写请求/响应、不重放 API。真正 reload 后探针消失、视频 readyState=4、图标再次未选中。正常来源验证接口同时确认 passport beat 会话有效；它不证明收藏权限或保存成功，不能据此判定账号/代理完全正常，也没有证据归因于 Intel CPU。
+
+热加载后的正式三 scope 采集完成 **ok/completed**：喜欢、收藏、关注均 **empty/complete**、0/0/0。没有非空账号信号，不伪造画像，不重复无输入模型初始化、不开启生产周期同步。站内收藏继续 **FAIL**，非空真实画像/周期增量继续 **BLOCKED**。已请求用户在同账号手机 App 做保存后重开对照，以区分网页入口与账号层问题，尚无结果。
+
+验证：Chrome build 与 22 项 manifest 资源检查通过，原生收藏相关扩展回归 **61 passed**，文档索引 **5 passed**。本轮没有功能源码修改，不冒充全量回归。隔离后端复用现有真实 openai_compatible 配置与 system 路由，生产配置/代理不变；服务和临时标签关闭，私有数据及诊断清理，已更新的正式插件产物保留。[脱敏证据](testing/assets/2026-10-14-tiktok-installed-favorite/real-e2e.json)。
+
+## 2026-10-13 另一个公开视频的单次收藏对照
+
+用户明确允许从当前页面另选一条可播放公开视频收藏。基于 `12007157`，复用现有登录 Chrome 与浏览器代理，选择首页实际播放的另一条视频，确认 readyState=4、白色未收藏后，通过 OpenCLI/CDP 对唯一对应按钮点击 **1 次**。图标变金色、计数 0→1；没有点赞、关注、取消收藏、请求重放或其他视频收藏。
+
+同址 `open` 复用了原文档，页内探针仍存在，因此不计作刷新证据。随后真正 `location.reload()`，确认 navigation.type=reload、探针消失、视频仍可播放，书签恢复白色、计数归零。进入本人「收藏」分页后明确显示「你收藏的作品将显示在这里」，视频链接 0 条、目标不存在。原生持久化 **FAIL**；反例已扩展到另一条视频，不能再将问题仅归于最初猫咪视频，也没有证据归因于 Intel CPU。
+
+本次被动 Resource Timing 与浏览器网络捕获未观察到目标收藏业务请求完成，不据此断言请求绝未发送，也不沿用上轮 HTTP 200/业务状态 0 作为本轮证据。未观察到显式登录、验证码或限流提示。未修改生产配置、代理、扩展安装包或功能代码；之前请求完成时序修复仍未热加载，不冒充最终正式 executor 验收。非空真实画像与真实周期增量仍 **BLOCKED**，没有新增信号，不重复无输入的模型初始化。
+
+`12007157` 的 GitHub CI 四项全部 SUCCESS：test、Windows HKCU autostart E2E、Smoke-build Firefox extension、Web guided-init E2E。本次仅补验收记录，文档索引测试通过。临时标签已关闭、浏览器 lease 已释放，无 Cookie、原始 DOM/响应或账号标识入库。[脱敏对照证据](testing/assets/2026-10-13-tiktok-alternate-favorite/real-e2e.json)。
+
+## 2026-10-13 历史改为可选、正式周期接线修复
+
+本轮用户明确表示没有历史可跳过，因此 **默认初始化/周期任务的历史能力为 N/A（用户范围排除）**，不是把失败改成 empty。`enqueue_tiktok_bootstrap()` 默认只请求喜欢、收藏、关注；显式历史任务仍支持原协议。旧四 scope 契约结果不复用为新的三 scope。CLI 提问、进度、结果和契约文档同步。
+
+修复一处真实周期阻塞：`RuntimeContext` 创建 `SourceIncrementalSync` 时漏传 TikTok 启用状态，导致逐源配置开启也不能安排任务。实际 runtime builder 回归先因缺少 tiktok 失败，修复后覆盖启动/异步热重载、全局与逐源 opt-in、真实 SQLite 入队、完成后推进周期、25 小时后下一轮以及关闭后取消排队。没有开启生产周期同步。
+
+真实后端（本修复 checkout、正常 `create_app`、隔离存储、现有真实模型配置和 system 代理）+ 已安装扩展完成 **三 scope PASS（明确空态）**：`tt_like / tt_collect / tt_follow` 全部 empty/complete，0/0/0，任务最终 ok/completed。随后正式 `POST /api/init` 返回 202，复用匹配的结果并结束为 **empty_signals**，不再因历史失败阻塞，但也没有生成伪造画像。源数据为空，非空真实画像与真实周期增量仍 **BLOCKED**。非空 fixture 的正常 API→账号绑定→幂等事件→generic 画像 owner 回归通过：第二轮重复项不再写入，新项接受；不把它当作真实账号/模型 E2E。
+
+收藏侧只读确认：原授权视频可正常播放，本人收藏列表仍明确为空，本轮未再点击写入。已询问是否允许另选一条可播放视频对照，在得到回答前不扩大授权范围。上一轮 request completion 修复仍未热加载，本轮扩展包未改；不能认定原生持久化成功。
+
+验证：相关集成 **142 passed**；更广后端 **374 passed**，5 项代理回归先因沙箱禁止本机监听阻断，另在允许监听环境重跑 **5 passed**。Ruff、MyPy（318 文件）、config-show 通过；来源审计 46 PASS / 14 MANUAL / 0 MISSING，只证明注册完整。真实服务已停止，临时账号存储删除，生产配置保持不变。[脱敏证据](testing/assets/2026-10-13-tiktok-optional-history/real-e2e.json)。
+
+## 2026-10-13 原生收藏请求完成时序修复
+
+范围 `capability-increment`，基线 `8070c731`。OpenCLI 真实浏览器对照中，当前轮多次（4 次）授权 UI 点击均先确认目标未收藏，未执行取消收藏或 API 重放；最终一次捕获的原生 `/api/item/collect/` POST 确认为目标视频、`action=1`、HTTP 200、`status_code/statusCode=0`，约 343ms 完成，无错误文案。关闭公约更新通知后仍一样：等待 3 秒，再真正刷新，新文档 complete 后书签仍白色。原生持久化继续 **FAIL**，不能归因于合成点击、通知弹层或 Intel CPU，也不能把成功响应作为账号收藏证明。
+
+发现独立的插件时序缺陷：按钮先乐观变金色，content 立即返回，runner 可能在网页请求尚未完成时刷新。先添加回归，得到 **FAIL（0 次等待，预期 4 次）**；修复后点击前启动只读 Resource Timing observer，等待同源、同视频、`action=1` 的新请求完成，再交由既有的新文档只读确认。观察不到完成仍有界失败，观察器不可用则不点击。新增完整 content→runner 测试确认请求未完成时不会刷新，并保留刷新后持久化证明；没有用任意固定延迟或 HTTP 200 代替成功条件。
+
+验证：相关扩展 **61 passed**；全量扩展 **1814 passed**；选定 TikTok/Instagram 契约、native-save 与文档后端套件 **347 passed**，其余 5 个代理回归先因沙箱禁止监听失败，在允许本机监听后 **5 passed**。Chrome/Firefox 构建、资源检查、TypeScript、Ruff、MyPy（318 文件）通过。没有重跑全量 pytest，没有宣称非空画像或真实周期增量通过。历史入口缺失沿用此前真实观察，本轮未复测；有效的其他 scope 行仍可被画像使用，历史失败本身不等于必须丢弃其他数据。
+
+本轮修复仅构建验证，尚未替换/重新加载用户安装的扩展；不将单元回归冒充更新后的账号 E2E。已真正刷新清除临时页内探针、确认探针不存在、关闭本次 trace 标签并释放两个浏览器 lease。未保存 Cookie、原始响应或账号 DOM。[脱敏证据](testing/assets/2026-10-13-tiktok-native-request/real-e2e.json)。
+
+## 2026-10-13 代理路由修复与真实点击对照
+
+范围 `capability-increment`，基线 `844485bc`，独立 repair worktree。默认 `system` 路由已存在，但 TikTok 的 curl_cffi 未物化 macOS OS-only 代理；`proxy=""` 被库忽略，direct 仍继承环境代理；custom 又会被环境 NO_PROXY 绕过。本机真实 libcurl → origin/proxy 回归先 **3 failed / 2 passed**，统一适配后 **5 passed**。Web API、登录探针和 TikTok 封面使用同一适配器；封面仍固定已验证公网地址和 TLS。Instagram/TikTok 浏览器任务沿用浏览器代理，未新增权限、改系统代理、切节点或重写用户配置。
+
+当前真实配置 `mode=system`，修复后的无 Cookie TikTok 首页 HTTPS 请求经已物化代理返回 **200 / 407811 bytes / 0.7 秒**；只证明公开网络通路，不冒充账号、画像或推荐链路通过。
+
+Chrome 的 CUA 查询仍超时，但 OpenCLI 桥接一度恢复可用，完成指定授权视频的单次 **CDP 真实鼠标点击（isTrusted=true）**。点击前白色未收藏，点击后金色；打开同 URL 没有新文档，未作为证明；随后执行真正 reload，确认页面内探针已消失、新文档 complete 后又是白色未收藏。仍 **FAIL**，因此不能只归因为 DOM 合成点击，也不能宣称代理补丁修复了站内收藏。未取消收藏或重放上游请求。
+
+同一 Chrome 会话用真实菜单进入 `/setting`，账号、隐私、广告、屏幕时间等栏目已加载，仍没有观看历史/活动中心入口。历史仍 **FAIL**。非空画像、周期增量仍 **BLOCKED**。本轮稍后读取网络诊断超时、Instagram 首次渲染检查连接中断；桥接复查恢复后，只读重试确认 Instagram 文档 complete、正文已渲染、21 个交互控件。未认定登录态采集或真实来源 E2E 通过。无需用户重复此前的手动点击对照。
+
+验证：路由与相邻套件 **125 passed**；认证、发现、图片边界、Instagram 契约、TikTok 初始化/增量/任务及配置套件 **848 passed / 37 skipped**；文档索引 **5 passed**；Ruff、MyPy（318 文件）通过。扩展源码/权限/安装包未改，不重复构建；未重跑全量 pytest，不改写此前两项失败。没有新增模块依赖、接口配置项或数据流，模块文档与 changelog 已同步。两个临时浏览器会话已释放，页内探针在真正刷新时已移除；未创建后端/诊断服务，未保存 Cookie、原始 DOM 或网络返回体。[脱敏证据](testing/assets/2026-10-13-tiktok-proxy/real-e2e.json)。
+
+## 2026-10-13 只读续验
+
+用户要求继续处理后，基于 `d0fbabc5` 重建隔离正常后端，真实模型/network 配置不变、所有自动写入与周期同步保持关闭。Chrome 浏览器可枚举但标签页查询仍超时，无法完成真实鼠标点击对照；项目扩展的 WebSocket 和登录态同步正常。
+
+首个正式包 `tt_collect` 任务超时，不能推断列表为空。随后临时只读阶段诊断观察到页面从未就绪进入正向登录身份、本人资料页和已证明的收藏 root，任务最终 empty/complete、0 行。恢复正式包后再执行只读收藏采集，同样 completed、empty/complete、0 行。没有看到此前测试视频延迟保存，也没有据此判定 Cookie 失效、Intel 不兼容或所有超时都已解决。没有再次收藏/取消收藏；未用失败结果或空态生成画像。
+
+本轮无功能代码修改，新增[脱敏续验证据](testing/assets/2026-10-13-tiktok-readonly-resume/real-e2e.json)。真实收藏持久化仍待手动点击刷新对照，非空画像与周期增量继续 **BLOCKED**；历史本轮未重跑，上一轮 `history_entry_not_found` 未解除。正式包已按摘要恢复，源码和产物均不含临时探针；隔离后端、诊断服务已停止，私有配置/Cookie/数据库/原始诊断/日志及依赖软链已清理。文档索引测试 5 passed，diff 检查通过。
+
+## 2026-10-12 明确视频授权后的原生收藏续修
+
+范围 `capability-increment`，基线 `68f0fb4f`，repair worktree `.worktrees/tiktok-full-readiness`。结论仍为 **incremental only**。用户已明确授权指定公开视频加入 `TikTok Favorites`，不再缺少授权；下面的实际结果取代旧段落中的“待授权/未执行”，历史记录不追改为通过。
+
+本轮修复：
+
+- 实机同页存在两个 `favorite-icon`：当前按钮 y=499，下一条预加载视频按钮 y=1222，而视口高 723。后者 CSS 仍可见，导致 `native_control_not_found`。现在只接受完整视口内的控件，拒绝零尺寸、裁切及歧义；优先点击唯一内层原生 button。
+- 当前桌面收藏图标变金色时，aria 文案仍为“添加到收藏”。补充只针对 `favorite-icon` 内唯一 `SpanBookmarkWrapper` SVG 的已观察金色识别，避免已选中时反向点击。
+- 四列表正式复查先出现喜欢完成后 `task_idle_timeout`；新增内容端持久接收 ACK 和后台有界核对，复现并修复空/错配 ACK 被误当投递成功。修复后三个普通列表在同一四 scope 任务中 empty/complete，历史单独返回缺少入口。一次成功不能证明所有时序都已稳定。
+- **金色并不是持久化证明**：TikTok 即时 `synced` / `already_synced` 也必须经过新文档的刷新只读确认。缺失 document instance、刷新失败或结果不再选中时均保留 `native_confirmation_not_observed`，不重复点击。新增成功/失败刷新、无文档与单次点击回归。
+
+| 链路 | 状态 | 本轮实际证据与限制 |
+| --- | --- | --- |
+| 精确授权与正式后端 | PASS | 当前用户明确确认同一公开视频；正常 Uvicorn/create_app + 真实 Chrome 已安装扩展/登录态，数据与 SQLite 隔离，模型/network 配置保持真实值。自动同步和周期调度均保持关闭。 |
+| 指定视频站内收藏 | FAIL（已真实执行） | 页面自然发出指定视频的收藏 POST，action=1、HTTP 200、业务状态 0，图标临时变金色；刷新后 0/3/8/15/25 秒均未收藏，四次只读收藏采集均显式 empty/complete。不得以 HTTP 成功或临时颜色宣称持久化成功。每次未确认后先只读核验，未盲目重复 toggle，未取消收藏。 |
+| 最终连续账号采集 | 三 scope PASS / 历史 FAIL | 任务 `92100a57-8d9c-4cf2-bc00-f422e74fd635` 的喜欢、收藏、关注均 empty/complete；历史 `history_entry_not_found`，整个四 scope 任务仍 failed。没有把缺入口当空历史或 N/A。 |
+| 非空画像与周期增量 | BLOCKED | 没有已持久保存的非空账号信号。未伪造事件/复制画像，未开启生产同步。正式 init 的上一轮 empty_signals 仍未解除；本轮未重跑无信号的模型链路。 |
+| 手动点击对照 | WAITING | 已请用户对同一视频手动收藏并刷新，区分程序点击与账号/网站持久化问题。Chrome 直连标签页查询仍超时；没有证据归因于 Intel CPU。 |
+| 最终正式 native-save 构建 | unit PASS / real NOT_RUN | 最后加入金色识别与强制刷新后，暂停进一步写入等待对照；上述请求/刷新证据来自前序构建和临时诊断。不得冒充最终正式 executor 全链路通过。 |
+
+[脱敏证据](testing/assets/2026-10-12-tiktok-authorized-native-save/real-e2e.json) 与 [六字段原生结果](testing/assets/2026-10-12-tiktok-authorized-native-save/native-save-result.json) 分开保存，不含 Cookie、账号 ID、完整 URL、原始 DOM、请求体或返回体。临时网络诊断只观察页面自行发出的请求，不重放接口或签名。
+
+验证：针对性新增用例先红后绿；扩展全量 **1809 passed / 0 failed**；原生保存针对性 **56 passed**，scope ACK 三项回归先红后绿、相关生命周期 **37 passed**；后端账号队列/初始化/readiness/增量及文档索引 **112 passed**。Ruff 与 MyPy（318 文件）PASS；Chrome/Firefox 正式构建及各 22 assets 均 PASS；Firefox 安装版真测 NOT_RUN。Python 实现未改，不把上一轮全量 pytest 的两个既有失败改写为通过。
+
+最终安装包摘要 `206e517b18a5462c8ae8742812dab6c57304ccf8e5397f5e9ccb7632d6e0524d`，已复制到注册目录并热重载；不含临时诊断。沿既有任务通道补充接收 ACK，架构图与模块文档已同步；CLI、配置、安装流程与权限未改变。本轮未合并或发布。隔离后端与私有诊断服务已停止；临时配置、Cookie、SQLite、原始诊断、日志、控制脚本和依赖软链已清理，正式构建保留在注册目录。
+
+## 2026-10-12 慢加载与连续列表交接修复
+
+范围 `capability-increment`，基线 `0077f7f8`，独立 repair worktree；结论 **incremental only**。本轮正式构建的三 scope 空列表连续采集通过，但不能据此声明非空画像、历史和原生收藏已验收。脱敏记录见 [real-e2e.json](testing/assets/2026-10-12-tiktok-readiness/real-e2e.json)。
+
+修复与直接证据：
+
+- 实机诊断里文档 complete 后登录证据仍晚到超过 12 秒。原生保存原先把“还没有登录控件”立即当作未登录；现在区分明确登录墙/登出与未就绪，save/verify 等待登录和内容同时就绪，最多 20 秒。匿名 upload 按钮不再是登录证明。共享 helper 默认仍 10 秒，并增加墙钟上限。
+- 本人资料和收藏 tab 已正确选中时，内容区域仍可能未挂载。已证明身份/范围后将 scope root 等待增至 60 秒（关注仍 20 秒），不把空白或未知容器当作 empty；task idle/absolute 上限保持优先。
+- 连续任务仍超时后，回归复现了 content 持锁等结果 ACK 时忽略下一 scope 的竞态。现在结果持久化后先释放采集锁，旧完成回调不能释放新 scope 的锁；同文档交接回归先红后绿，随后正式安装包的三 scope 连续实测通过。不能据此断言此前每次超时都来自同一原因。
+
+| 实际链路 | 结果 | 证据与限制 |
+| --- | --- | --- |
+| 后端/安装来源 | PASS | 正常 create_app/Uvicorn 8420 + 注册 Chrome 扩展，隔离配置/数据/SQLite，模型与 network 配置对象保持一致。构建和 22 assets 通过后部署，复制前后摘要一致、热重载已送达。 |
+| 连续喜欢/收藏/关注 | PASS（正式构建空态） | 任务 `fe047cac-a661-46ac-90b5-4e57cf7153b8` completed，三 scope 均 empty/complete，真实接受行数 0；正式包摘要 `50a556ae4bde6043778a40fed66193e1d23255fdd5347fe3b148095c175c5d23`。不是非空采集证明。 |
+| 历史入口 | FAIL | 诊断构建确认当前账号 `/setting` 保有 viewer，但设置项没有观看历史/活动中心入口，返回 history_entry_not_found；不伪造空历史，不改为 N/A。 |
+| 正式初始化 | FAIL | POST /api/init HTTP 202，新建 profile_update=true 四 scope 任务；收藏/关注 empty，喜欢仍出现 scope_root_not_proven，历史 history_entry_not_found。终态 empty_signals / initialized=false，无画像；没有复用只读三 scope smoke，正式连续成功一次不代表重复执行稳定。 |
+| 周期增量 | BLOCKED | 没有该账号本轮初始画像/非空事件，全局和来源周期开关保持关闭。 |
+| 原生收藏写入 | BLOCKED | 用户已一般性允许；自动审批要求明确确认助手提出的那条具体视频，确切目标问题仍待回复。拒绝发生在工具执行前，没有写入上游收藏或本地测试 membership。 |
+
+正式初始化失败后追加三次只读诊断：第一次 idle timeout，后两次分别两 scope、三 scope 均 empty/complete。记录显示收藏选中后内容还可晚到约 12 秒；未稳定复现正式初始化的喜欢页失败，不把诊断成功追认成正式初始化成功。
+
+自动化验证：原生冷加载与慢列表回归先出现 3 项失败；同文档 scope 交接新增 1 项失败，修复后针对性 **31 passed**；扩展全量 **1799 passed / 0 failed**；相关后端 `test_tiktok_tasks` / `test_tiktok_guided_init` / `test_tiktok_readiness` / `test_source_incremental_sync` **107 passed**；文档索引 **5 passed**。Chrome/Firefox build + 22 assets 均通过，Firefox 未做安装版真测。扩展全量测试首次受沙箱禁止监听 localhost 阻断，获得本机端口权限后全量通过。注册审计 PASS 46 / MANUAL 14 / N/A 2 / MISSING 0，只证明登记完整。本轮 Python 实现未改动，没有把上一轮全量 pytest 的两个失败记作本轮全绿。
+
+本轮结束保留已验证的正式包（上述 50a556… 摘要）在 Chrome 注册目录；临时诊断未留在源码或安装包。原静态安装包另存本机私有回退压缩包；隔离后端已停止，临时配置/Cookie/数据库/原始诊断/日志和依赖软链已删除。用户主数据、上游收藏及周期同步开关未写入。未合并、未发布。
+
+## 2026-10-11 重新加载后的账号页面续修
+
+范围 `capability-increment`，基线 `1df4e59f`，独立 repair worktree；结论仍为 **incremental only**。本节更新上一次“需手动重新加载”的运行状态，不把局部诊断成功升级为 full 验收通过。脱敏记录见 [real-e2e.json](testing/assets/2026-10-11-tiktok-account-resume/real-e2e.json)。
+
+已修复当前页面中可重现的缺陷：
+
+- 喜欢、收藏标签无 `aria-controls` 时，识别属于本人且已选中 scope 的专属显式空态；关注弹窗要求标题精确匹配 viewer 和 following 专属空文案。隐藏、他人、followers、空白或通用错误不作 empty。
+- 设置页没有 nav-profile 链接时，从 canonical app-context session user 取身份，并要求额外正向登录证据；显式 logout 和冲突身份拒绝。使用实际更多菜单的 `settings-entrance`（中文“通用”）进入 `/setting`，整页恢复不再重开设置。
+- 登录/本人页/关注弹窗分阶段等待；scope 基础预算 90 秒，360 秒绝对上限和 120 秒 idle 不变。内容脚本尚未注册时最多重投 20 秒，同一任务/scope 才可继续，清理后停止，重投不延长 deadline。
+- 初始化只复用匹配 profile_update、完整 scope、预算及增量 owner 的在途或最新权威成功任务；只读 smoke、部分 scope、失败与 degraded 任务不再替代正式初始化。SQLite 回归证明修复前 smoke/partial/failed 三类失败，修复后全部通过。
+
+| 实际链路 | 结果 | 证据与限制 |
+| --- | --- | --- |
+| Cookie / 后端 / 安装产物 | PASS | 扩展真实同步、passport HTTP 200 verified；正常 Uvicorn 8420、隔离配置和 SQLite，模型及 network 对象保持一致。逐次完整 build/assets 通过后才备份/替换注册目录并热重载、核对摘要。一次传输失败不标记 Cookie 失效。 |
+| 喜欢、收藏、关注显式空态 | PASS（诊断构建的独立空态） | 真实 Chrome 分别确认本人三种空列表，接受行数 0。诊断构建只增加只读证据，不代表最终正式构建全链通过，不证明新版非空列表采集。 |
+| 四 scope 正式构建 | FAIL | 新隔离后端依然出现 sendMessage_failed、scope_root_not_proven、logged_out、idle timeout。补投递重试后的最后一次三 scope 任务均 logged_out，无消息投递失败；仅表明缺少正向登录证据，不据此推断 Cookie 过期或 Intel 不兼容。 |
+| 历史入口 | FAIL | 已成功导航当前账号 `/setting` 且保留 viewer；渲染设置项里没有找到历史/活动中心入口，返回 history_entry_not_found。未伪造空历史。 |
+| 正式初始化 | FAIL | 真实 `POST /api/init` 返回 202，并新建 profile_update=true 四 scope 任务，未复用前面的 smoke。任务无有效信号，最终 reason=empty_signals / initialized=false，没有画像产物。 |
+| 周期增量 | BLOCKED | 尚无该真实账号的有效初始画像；全局/来源周期开关保持关闭。未用已有画像替代本轮账号初始化。 |
+| 站内收藏 | NOT_RUN | 未执行收藏/取消收藏。真实写操作仍缺用户指定的允许测试视频，未用任意推荐视频替代授权目标。 |
+
+测试结束已按 SHA-256 恢复原注册目录安装包，停止本轮隔离后端，清除私有 Cookie、SQLite、原始 DOM 诊断及日志；用户主数据和上游收藏未作为写入目标。
+
+验证：扩展全量 **1791 passed / 0 failed**；新增后端 bootstrap 回归及同文件测试 **114 passed**；相关后端套件 **312 passed / 37 skipped**；文档索引 **5 passed**；Chrome/Firefox build + assets、Ruff、MyPy（318 文件）通过。注册审计 PASS 46 / MANUAL 14 / N/A 2 / MISSING 0，只证明登记完整。
+
+
+全量 `pytest -q` 实际结果为 **10428 passed / 65 skipped / 2 failed**（2011.94 秒），不是全绿。`test_login_codex_import_uses_source_path` 出现 RemoteProtocolError，目标分支与基线的定点重跑均通过；`test_run_guided_init_bounds_stage1_and_stops_extension_worker` 的 30ms 超时/线程取消断言在未改动基线 `1df4e59f` 上单独连续三次复现失败。未扩大本次 TikTok 修复去修改这两个既有测试。
+
+## 2026-10-11 账号入口续修
+
+范围 `capability-increment`，基线 `618843fb`，原修复 worktree 开始干净。结论 **incremental only**：本轮修复两处可复现缺陷，尚不能把下方账号 FAIL/BLOCKED 改为 PASS。
+
+- 实际 Chrome 的本人标题先于标签挂载；修复独立等待喜欢/收藏入口。真实测试从 `scope_tab_not_found` 推进到本人 URL + 精确身份副标题 + `liked-tab[aria-selected=true]`，随后仍报 `scope_root_not_proven`，接受行数 0。具体 [脱敏证据](testing/assets/2026-10-11-tiktok-account-repair/real-e2e.json)。
+- 结果回传的单次请求原来没有超时；补默认/最大 10 秒 deadline、AbortSignal 与迟到 URL 守卫，保持持久 FIFO/原 body 重放。该缺陷由挂起 transport 回归证明，不声称是上一轮实机停顿的唯一原因。
+- 后续诊断 TypeScript 构建失败，但临时部署脚本未停在失败处，导致扩展连接断开；完整有效产物已重建；结束前按 SHA-256 校验恢复原 manifest/dist/icons/popup，取消本次待领取任务。扩展 WebSocket 仍未连接，需在 Chrome 扩展页手动重新加载一次。属于本次测试控制器错误，不归因于 Intel CPU、用户登录或 TikTok。账号列表、画像初始化、周期增量与站内收藏仍需继续实测，未执行上游写操作。
+
+
+验证：扩展全量 **1783 passed**；后端相关 **312 passed / 37 skipped**；文档索引 **5 passed**；Chrome/Firefox build + 22 assets、Ruff、MyPy（318 文件）通过。source audit 为注册检查，不能替代账号真测。隔离 smoke 未生成画像，真实配置/数据未被测试写入。
+
+## 2026-10-11 真实请求续验（PR #286）
+
+本轮结论仍为 **incremental only**：公开发现的真实推荐链路通过；账号采集实际运行后仍失败，不能用单元测试或 Cookie 校验替代四项账号能力验收。脱敏证据见 [real-e2e.json](testing/assets/2026-10-11-tiktok-full-live/real-e2e.json)。
+
+| 链路 | 结果 | 实际证据 |
+| --- | --- | --- |
+| 正常后端 / 登录凭据 | PASS | 目标 worktree 的 `create_app()`，真实 Uvicorn/TCP 8420；隔离配置、数据与 SQLite；扩展通过真实 WebSocket 自动同步 Cookie；TikTok passport 校验 HTTP 200 / verified。有效模型与 network 配置对象保存前后相等，无 mocks 或 ASGITransport。 |
+| 搜索 → 评估 → 推荐 | PASS | 使用隔离副本中的真实已有画像，两次真实搜索共 fetched=12 / enqueued=12 / evaluated=12 / admitted=1 / rejected_low_score=11 / copy_ready=1；真实 GET recommendations HTTP 200 返回 1 条 TikTok 内容，来源与 HTTPS 视频标识正确。本地 Ollama embedding 与配置中的远程聊天模型均真实调用；经历 429 和首轮 180 秒测试窗口超时后，经配置的后备链重试完成。不是 TikTok 初始化生成的画像。 |
+| 实际安装产物 / dispatch | PASS | Chrome 注册目录原为 tiktok-source-readiness。逐次备份 manifest/dist/icons/popup，校验候选构建摘要后经 `/api/extension/reload` 热重载；实际扩展领取任务（pending → in_progress），最后恢复原安装产物。诊断构建仅增加只读、无凭据字段，不当作未经修改的发布构建。 |
+| 四 scope 账号采集 | FAIL | 原构建四 scope 均误报 login_wall。诊断证明页面没有可见登录提示，实际读到了隐藏脚本文案；修复后推进到本人页/列表确认，仍出现 profile_entry_not_found、scope_root_not_proven，以及一次重载后才结算的 task_idle_timeout。新建无画像的正常后端上再次实测，普通 smoke 仍未稳定产出本人列表。 |
+| 普通 smoke 数据边界 | PASS（干净运行） | 新隔离后端无画像，profile_update=false 的失败任务未创建画像。之前含已有画像的诊断进程发生后台学习，因此那次原始画像文件差异不记通过；后续 Cookie 刷新禁用额外模型预热。生产数据未作为测试写入目标。 |
+| 画像初始化 / 周期增量 | BLOCKED | 尚无通过本人归属和 scope 验证的真实账号信号，未把已有画像或公开搜索当作账号初始化。 |
+| 站内收藏 | NOT_RUN | 未向 TikTok 执行任何收藏/取消收藏写入。 |
+
+已修复：迟到 Cookie 未刷新访客客户端；隐藏登录翻译误报；登录/资料/列表 hydration 等待；本人资料显示名与账号副标题兼容；本人页重复导航；scope 基础预算覆盖导航等待。可见登录墙与账号边界仍失败关闭。完整浏览器页面检查目前仍受 Codex Chrome 控制连接超时限制；账号门未通过前不得声明 full 完成。
+
+验证命令：`pytest tests/test_source_auth_contract.py tests/test_tiktok_producer.py tests/test_tiktok_web.py tests/test_tiktok_readiness.py tests/test_tiktok_contract.py tests/test_docs_index.py`；`ruff check src/ tests/`；`mypy src/`；扩展 `npm test`、Chrome/Firefox build（均从目标 worktree，Python 显式设置 PYTHONPATH）。最终结果：后端相关套件 **375 passed / 37 skipped**；扩展全量 **1781 passed / 0 failed**；Ruff / MyPy（318 文件）及 Chrome/Firefox build + assets 全部通过。本轮未把先前 baseline 的全后端 CI 当作新补修的全量结果。
+
+
 本轮续验日期：2026-10-10。登录态搜索、安装版 Chrome 扩展 Cookie 自动同步和真实模型管线已通过；当前详细结果见文末续验。历史段落保留其当时的证据边界，不代表当前仍缺 Cookie。discovery-only 范围的真实功能验收已补齐；本机全量与修复后回归结果见文末，当前分支 CI 以 [PR #275 checks](https://github.com/whiteguo233/OpenBiliClaw/pull/275/checks) 为准。
+
+## PR #286 独立验收与修复（2026-10-11）
+
+固定基线：`a9d9b0bc...7a6386ba`（原分支实际包含 7 个提交，含契约提交）；修复 worktree `.worktrees/tiktok-full-readiness`，分支 `fix/tiktok-full-readiness`。本轮为 full 范围验收与修复，原分支/主工作区开始均干净；不合并、不发布、不切换生产服务。
+
+原交付不能判为“全部实现并交付”：真实 backend bootstrap_profile 被 dispatcher 拒绝、全局 DOM 采集可误归类、未 ACK partial 可被 timeout 覆盖、普通 smoke 可写画像、后端缺冻结预算/账号边界；原 head CI 还因两处 E501 提前失败。下方原 ledger 的实现 PASS 属历史注册/单测证据，不能覆盖这些缺陷。
+
+| 本轮门 | 结论 | 证据/限制 |
+| --- | --- | --- |
+| 实际任务协议 / CLI 等待 | 修复并专项通过 | Python next-task JSON → TS dispatcher → API event ingress，四 scope 顺序和累计 cap；CLI 480 秒覆盖最多 360 秒执行与领取余量；synthetic DOM rows，不冒充真站 |
+| 本人列表/登录墙/导航恢复 | 修复并专项通过 | exact own profile + proven active scope root，拒绝全局 DOM，登录墙优先；content lifecycle / scope tests |
+| durability / scope / account / profile ownership | 修复并专项通过 | FIFO ACK replay、独立持久 idle/absolute deadlines、scope caps 与 sticky degraded、SQLite first-account fence（handle hash 稳定，可选 secUid 冲突守卫）、smoke 无画像传播；观察身份不冒充 verified |
+| native-save SPA 身份 | 修复并专项通过 | 等待/确认阶段 URL 改变时零误点、零误报成功；无真实站内写操作 |
+| 全量回归/构建 | 部分通过，全量进行中 | Ruff/MyPy 318 文件、Chrome/Firefox build+assets 通过；最终插件 1779/1779，后端受影响回归 232 passed，最后两项边界修复后相关回归 113 passed，CLI/文档 20 passed；首轮完整后端回归（早于最后两项边界修复）为 10409 passed / 1 failed / 65 skipped，失败是旧身份迁移测试固定日期过期；在原 head 复现后仅修正测试日期，生产时效逻辑不变，修复后该文件 14 passed；最终 head CI 见 PR #286 checks。CI 显式使用 Node 22 执行 Python→TS 协议桥 |
+| 已安装登录态 bootstrap→真实模型画像 | BLOCKED | Chrome inventory 两次失败，当前无可读标签页；不能重用 #275 的发现链路证明 |
+| 已安装增量/站内收藏真实验证 | NOT_RUN | 依赖同一可控已登录浏览器和新版扩展；收藏另须 exact item/action/target 的具体授权 |
+
+总体仍为 **incremental only**；代码修复与 fixture/protocol 测试不等于 full 验收 complete。未执行上游点赞、收藏、关注或取消操作。
+
+## Full 升级验收 ledger（2026-10-11 起，进行中）
+
+本轮把 integration level 从 `discovery-only` 升级为 `full`：账号行为采集（点赞/收藏/观看历史 bootstrap + 周期增量）、guided init 画像初始化、站内收藏 native save。分支 `feat/tiktok-full-source`（worktree `.worktrees/tiktok-full`，基于 `feat/tiktok-source` 头 `a9d9b0bc`），stacked 于 PR #275 之上。
+
+契约门基线：契约更新为 `full` 后 audit `required_missing=11`（transport.implementation、source-auth.capability-readiness、profile.signals、profile.incremental、profile.bootstrap-registries、extension.task、extension.task-marker、extension.background、surface.setup、engagement.danmaku 排除测试改名、media.native-save），对应下表 NOT_RUN 项；全部 required 行 PASS 前总体 verdict 为 **incomplete**。2026-10-11 收尾后 audit `required_missing=0`、`registration_check_passed=true`（PASS 46 / MANUAL 14 / N/A 2）；MANUAL 14 项为语义类人工验收，真实登录态受控 E2E 见「真实验收」行。
+
+| Gate | Applicability | Status | Evidence / remaining risk |
+| --- | --- | --- | --- |
+| Contract gate（冻结 full 契约） | required | PASS | 契约已更新为 full；audit 基线 11 MISSING，见上 |
+| 后端任务基建（tiktok_tasks 队列表 + 五处注册 + next-task/task-result 路由） | required | PASS | 提交 4644dded；`TiktokTaskQueue` + `tiktok_tasks` 表、`_TASK_TABLES` / `_BOOTSTRAP_TASK_TABLES` / `bootstrap_state` / `source_incremental_sync` 五处注册、`GET next-task`（204）/ `POST task-result`（两阶段 staged completion）/ `POST kick`；23 项队列与路由测试 |
+| 插件采集端（tiktok-task-dispatcher + content/tiktok + manifest 注册，两阶段 staged completion） | required | PASS | 提交 8799b0aa / e65d7e21：`tiktok-task-dispatcher.ts`（poll → claim → marker tab → 两阶段 staged completion，pending-result 先落 `chrome.storage.local` 再有界重试至 2xx ACK）、`content/tiktok.ts` + `tt/`（DOM-only，零 dy 依赖）、双 manifest content_scripts 注册；canonical 路由键模块 `content/tiktok/task-executor.ts`；audit `extension.task` / `extension.task-marker` / `extension.background` PASS |
+| 画像初始化（guided init 接入，init 真实信号） | required | PASS | `_INIT_SOURCE_ORDER` / `_PLATFORM_SOURCE_FIELDS` 放行，`guidedInit: true`，CLI `--yes-tiktok` / `--no-tiktok`，`_enqueue_tiktok_bootstrap_task` / `_collect_tiktok_bootstrap_events` 接入 init 第 1 阶段，事件经 `_tiktok_events_to_history_items` 进画像；`tests/test_tiktok_guided_init.py` 15 项；audit `profile.signals`、`surface.setup` 转 PASS（真实登录态采集证据仍属「真实验收」行） |
+| 周期增量（source_incremental_sync，默认关不变） | required | PASS | 提交 4644dded；`SOURCE_ORDER` / `_TASK_SPECS` / `_SOURCE_CONFIG_ALIASES` / `_SOURCE_CONFIG_NAMES` / `_SOURCE_INTERVAL_FIELDS` 注册，`source_incremental_enabled` 与 `sources.tiktok.incremental_enabled` 双默认关不变；`seed_guided_init_attempts` 把 tiktok 归入 ok-only 组 |
+| 站内收藏（ExtensionNativeSaveBroker + native-save/tiktok.ts，auto_sync 默认关，精确授权 E2E） | required | PASS | 提交 e65d7e21 / 0cb57594：broker / adapter / identity 注册（`is_native_save_local_only("tiktok")=False`），executor 目标 `TikTok Favorites`，auto_sync 默认关闭；`test_extension_native_save_broker.py` / `test_saved_sync_extension_adapters.py` 等新增用例通过；真实受控 E2E 仍待人工授权运行（见下行） |
+| 契约测试反转（test_tiktok_contract.py 排除断言改写为正向） | required | PASS | 排除断言全部改写为正向注册断言并通过（12 项）；契约登记的 `test_tiktok_engagement_danmaku_is_unavailable` / `test_tiktok_media_deep_link_uses_https` 精确存在；audit `required_missing=0`（PASS 46 / MANUAL 14 / N/A 2 / MISSING 0，`registration_check_passed=true`） |
+| 真实验收（登录态 bootstrap/增量/native-save 受控 E2E） | required | FAIL | 本轮实际装载构建并执行账号任务，但本人页/列表确认仍失败；初始化与增量 BLOCKED，native-save NOT_RUN，见顶部真实续验。 |
+| 文档/交付（模块文档、CHANGELOG、架构图、PR） | required | PASS | `tiktok.md`（账号 bootstrap / guided init / native save 章节）、`cli.md` / `init.md` / `api.md` / `config.md` / `extension.md` / `saved-sync.md`（六平台→七平台）已同步；CHANGELOG 三个升级条目；PR 待上层统一提交 |
+
+总体 verdict：**incremental only** —— required 行中「真实验收」仍 FAIL，登录态真实受控 E2E 完成前不得宣称 complete。
 
 ## 范围与 provenance
 

@@ -103,7 +103,7 @@ async def fetch_tiktok_cover(url: httpx.URL) -> tuple[bytes, str]:
     from curl_cffi import CurlOpt, ffi, lib
     from curl_cffi.requests import AsyncSession, RequestsError
 
-    from openbiliclaw.network import outbound_cli_proxy_url
+    from openbiliclaw.network import curl_cffi_proxy_kwargs
 
     seen: set[str] = set()
     for hop in range(_MAX_REDIRECTS + 1):
@@ -116,21 +116,17 @@ async def fetch_tiktok_cover(url: httpx.URL) -> tuple[bytes, str]:
         address = await _resolve_address(url)
         target = f"[{address}]" if ":" in address else address
         policy = _httpx_client_kwargs(url.host)
-        proxy = policy.get("proxy", "")
-        if policy.get("trust_env", True):
-            # libcurl does not read macOS System Settings itself; materialize
-            # the same system policy used by the httpx DNS request.
-            proxy = outbound_cli_proxy_url()
+        proxy_options = curl_cffi_proxy_kwargs(
+            None if policy.get("trust_env", True) else policy.get("proxy", "")
+        )
         # curl_cffi converts RESOLVE lists, but CONNECT_TO requires its native
         # slist pointer. Keep it alive through response/session close.
         connect_to = lib.curl_slist_append(ffi.NULL, f"{url.host}:443:{target}:443".encode("ascii"))
         if connect_to == ffi.NULL:
             raise CoverFetchError(502, "Unable to allocate pinned cover route")
         try:
-            async with AsyncSession(
-                proxy=proxy,
-                curl_options={CurlOpt.CONNECT_TO: connect_to},
-            ) as session:
+            proxy_options["curl_options"][CurlOpt.CONNECT_TO] = connect_to
+            async with AsyncSession(**proxy_options) as session:
                 response = await session.get(
                     str(url),
                     headers=_upstream_headers_for_host(url.host),

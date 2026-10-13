@@ -122,8 +122,9 @@
   </style>
 </head>
   <body>
-    <!-- weibo and instagram are included in the shared guided-init roster;
-         bootstrap readiness is read from prerequisites.source_capabilities. -->
+    <!-- weibo, instagram and tiktok are included in the shared guided-init
+         roster; bootstrap readiness is read from
+         prerequisites.source_capabilities. -->
   <div class="card">
     <div class="head">
       <div class="brand"><img class="mark" src="/m/icon-maskable-192.png" alt=""><span>OpenBiliClaw</span></div>
@@ -381,6 +382,7 @@
       discovery_timeout: "画像已生成，但首轮内容池整理超时。",
       discovery_partial: "画像已生成，但首轮内容池本次未完成。",
       douyin_degraded: "抖音已采数据已用于画像，但至少一个账号范围的分页未完整完成。",
+      tiktok_degraded: "TikTok 已采数据已用于画像，但至少一个账号范围的分页未完整完成。",
       internal_error: "初始化过程中出错了，请稍后重试。",
       interrupted: "上次初始化被打断（后端重启），可重试。",
       cancelled: "初始化已取消。",
@@ -981,6 +983,7 @@
         "discovery_timeout",
         "discovery_partial",
         "douyin_degraded",
+        "tiktok_degraded",
       ];
       if (detail && (detailFirst.includes(reason) || detail.startsWith("画像分析失败："))) {
         return detail;
@@ -1370,6 +1373,7 @@
           "discovery_timeout",
           "discovery_partial",
           "douyin_degraded",
+          "tiktok_degraded",
         ].includes(reason) ||
           detail.startsWith("画像分析失败："))
       ) return detail;

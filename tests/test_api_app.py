@@ -2695,6 +2695,7 @@ class TestBackendAPI:
         import openbiliclaw.soul.engine as soul_engine_module
         import openbiliclaw.sources.bili_tasks as bili_tasks_module
         import openbiliclaw.sources.dy_tasks as dy_tasks_module
+        import openbiliclaw.sources.tiktok_tasks as tiktok_tasks_module
         import openbiliclaw.sources.x_tasks as x_tasks_module
         import openbiliclaw.sources.xhs_tasks as xhs_tasks_module
         import openbiliclaw.sources.yt_tasks as yt_tasks_module
@@ -2850,6 +2851,10 @@ class TestBackendAPI:
             def __init__(self, database: object) -> None:
                 self.database = database
 
+        class FakeTiktokTaskQueue:
+            def __init__(self, database: object) -> None:
+                self.database = database
+
         class FakeZhihuTaskQueue:
             def __init__(self, database: object) -> None:
                 self.database = database
@@ -2962,6 +2967,7 @@ class TestBackendAPI:
         monkeypatch.setattr(account_sync_module, "AccountSyncService", FakeAccountSyncService)
         monkeypatch.setattr(bili_tasks_module, "BiliTaskQueue", FakeBiliTaskQueue)
         monkeypatch.setattr(dy_tasks_module, "DyTaskQueue", FakeDyTaskQueue)
+        monkeypatch.setattr(tiktok_tasks_module, "TiktokTaskQueue", FakeTiktokTaskQueue)
         monkeypatch.setattr(x_tasks_module, "XCreatorStore", FakeXCreatorStore)
         monkeypatch.setattr(xhs_tasks_module, "XhsTaskQueue", FakeXhsTaskQueue)
         monkeypatch.setattr(xhs_tasks_module, "XhsCreatorStore", FakeXhsCreatorStore)
@@ -3005,6 +3011,7 @@ class TestBackendAPI:
             "reddit": False,
             "linuxdo": False,
             "v2ex": False,
+            "tiktok": False,
         }
         assert captured["runtime_controller_kwargs"]["bilibili_producer"] is not None
         assert (
@@ -17717,20 +17724,24 @@ class TestGuidedInitEndpoints:
         # Rejected before reserving — no run row created at all.
         assert db.get_latest_init_run() is None
 
-    def test_init_rejects_tiktok_only_selection(self, tmp_path: Path) -> None:
-        """TikTok is not a guided-init source (guidedInit: false — its discovery
-        is creator/tag driven and collects no profile signals), so a tiktok-only
-        selection normalizes to empty and must be rejected, not silently
-        enabling the source."""
+    def test_init_accepts_tiktok_as_only_profile_signal_source(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """TikTok joined guided init with its account bootstrap queue
+        (tt_like/tt_collect/tt_history/tt_follow), so a tiktok-only selection
+        is a legal run and must reach the shared pipeline."""
         from fastapi.testclient import TestClient
 
         prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["tiktok"])
         app, db = self._make_app(tmp_path, prereqs=prereqs)
+        captured = self._capture_run_guided_init(monkeypatch)
         with TestClient(app) as client:
             resp = client.post("/api/init", json={"sources": ["tiktok"]})
-        assert resp.status_code == 409
-        assert resp.json()["error"] == "no_sources_selected"
-        assert db.get_latest_init_run() is None
+            assert resp.status_code == 202
+            self._drive_until(client, captured, key="include_tiktok")
+        assert captured["include_bili"] is False
+        assert captured["include_tiktok"] is True
+        assert db.get_latest_init_run() is not None
 
     def test_init_accepts_reddit_as_only_profile_signal_source(
         self, tmp_path: Path, monkeypatch
@@ -17792,6 +17803,51 @@ class TestGuidedInitEndpoints:
             "readiness": "login_required",
         }
         assert db.get_latest_init_run() is None
+
+    def test_init_rejects_tiktok_only_when_profile_capability_is_signed_out(
+        self, tmp_path: Path
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(
+            bili="ok",
+            chat=True,
+            platforms=["tiktok"],
+            capability_readiness={("tiktok", "profile"): "login_required"},
+        )
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+
+        with TestClient(app) as client:
+            response = client.post("/api/init", json={"sources": ["tiktok"]})
+
+        assert response.status_code == 409
+        assert response.json()["error"] == "no_profile_signal_sources"
+        assert response.json()["capability"] == "profile"
+        assert response.json()["readiness"] == "login_required"
+        assert db.get_latest_init_run() is None
+
+    def test_init_drops_unready_tiktok_from_mixed_selection_with_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        prereqs = _FakeInitPrereqs(
+            bili="ok",
+            chat=True,
+            platforms=["bilibili", "tiktok"],
+            capability_readiness={("tiktok", "profile"): "unverified"},
+        )
+        app, db = self._make_app(tmp_path, prereqs=prereqs)
+        captured = self._capture_run_guided_init(monkeypatch)
+        with TestClient(app) as client:
+            response = client.post("/api/init", json={"sources": ["bilibili", "tiktok"]})
+            assert response.status_code == 202
+            assert any("TikTok 个人信号未就绪" in w for w in response.json()["warnings"])
+            self._drive_until(client, captured, key="include_tiktok")
+
+        assert captured["include_bili"] is True
+        assert captured["include_tiktok"] is False
+        assert db.get_latest_init_run() is not None
 
     def test_init_records_douyin_degraded_as_partial_success(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

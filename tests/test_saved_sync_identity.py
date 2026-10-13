@@ -21,7 +21,8 @@ def test_native_save_local_only_roster() -> None:
     # as unsupported/local_only_source instead of a misleading pending state.
     assert is_native_save_local_only("github") is True
     assert is_native_save_local_only("weibo") is True
-    assert is_native_save_local_only("tiktok") is True
+    # TikTok gained a real extension native-save adapter; it is no longer local-only.
+    assert is_native_save_local_only("tiktok") is False
     assert is_native_save_local_only("bilibili") is False
     assert is_native_save_local_only("douyin") is False
 

@@ -66,7 +66,7 @@
    请按照 https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md 的说明帮我部署 OpenBiliClaw 后端(务必用 Bash 的 curl 下载这个文档,不要用 WebFetch — 会丢关键指令)
    ```
 
-3. **连接来源** —— 在装了插件的浏览器登录 [B 站](https://www.bilibili.com)（默认初始化来源），或改选小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / V2EX / 微博 / GitHub。Linux.do、Bangumi、V2EX、微博与 GitHub 均可公开发现；需要账号态的来源仍复用已安装插件，GitHub 则由后端官方 REST API 匿名读取公开 repository。GitHub 可用公开用户名把 starred repositories 用作初始化信号，PAT 只是可选的提额和身份校验方式。TikTok（实验性）以后端 Web API 访客身份做推荐流 / 话题标签 / 创作者发现，可选登录 Cookie 后可尝试关键词搜索（需单独验证可用性）；它不参与引导初始化。 Instagram（实验性、默认关闭）通过隔离浏览器任务发现内容，登录后可只读导入本人点赞、收藏和关注；生产启用前需确认 Meta 自动采集许可。
+3. **连接来源** —— 在装了插件的浏览器登录 [B 站](https://www.bilibili.com)（默认初始化来源），或改选小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do / V2EX / 微博 / GitHub。Linux.do、Bangumi、V2EX、微博与 GitHub 均可公开发现；需要账号态的来源仍复用已安装插件，GitHub 则由后端官方 REST API 匿名读取公开 repository。GitHub 可用公开用户名把 starred repositories 用作初始化信号，PAT 只是可选的提额和身份校验方式。TikTok（实验性）以后端 Web API 访客身份做推荐流 / 话题标签 / 创作者发现，可选登录 Cookie 后可尝试关键词搜索（需单独验证可用性）；已接入登录态引导初始化，账号列表的真实安装版验收仍待完成。 Instagram（实验性、默认关闭）通过隔离浏览器任务发现内容，登录后可只读导入本人点赞、收藏和关注；生产启用前需确认 Meta 自动采集许可。
 
 4. **打开界面** —— 浏览器访问 `http://127.0.0.1:8420/web`；手机扫插件二维码打开 `http://<电脑局域网 IP>:8420/m/`，保存到主屏幕即可当 App 用；想要原生 App 体验，可安装独立仓库的 [Flutter 客户端](https://github.com/whiteguo233/OpenBiliClaw-mobile)（Android / iOS / Web / 桌面，安装包见 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest)），在设置里填后端地址即可连接同一后端。
 
@@ -636,6 +636,10 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 TikTok 封面：`图片代理 → DoH 公网地址校验 → 固定 IP / 保留 TLS 身份 → 缓存`，沿配置的网络路由执行。
 
 TikTok：`正式发现 / 灵感探索 → 共用请求间隔与持久限流状态 → 签名 Web API → 候选池`；仅 auto 模式允许 yt-dlp 回退。
+
+TikTok 登录态同步：`扩展 Cookie → 验证并保存 → 有效凭据变化时安全重建运行时 → 挂载关键词搜索`；重复同步不重启任务。
+
+TikTok 账号链路：`手动初始化 / 显式开启的周期增量 → 来源启用状态（启动 / 热重载）→ bootstrap_profile（喜欢 / 收藏 / 关注，历史可选，冻结预算）→ 插件持久接收确认 / 本人列表 → 账号绑定 / staged result → 幂等事件 → 画像`；站内保存单独经 `local membership → durable native-save job → 精确视频收藏 / 刷新只读确认`。新增账号能力的真实安装版验收仍待完成，见 [验收台账](docs/platform-source-acceptance.tiktok.md)。
 
 本地向量：`正式请求 / 诊断 → Ollama 自动加速 → 有效向量；runner 故障 → CPU 重试 → 验证结果`。CPU 选择在本次后端运行期间共享，重启后重新尝试自动加速。
 

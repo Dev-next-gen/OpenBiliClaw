@@ -4,6 +4,64 @@
 
 ## 未发布：TikTok 源后端缺口修复与前端展示面补全（issue #88）
 
+- TikTok 首版合并收尾：同步主线 v0.3.228 与动态日期测试修复，保留发现推荐已验收、收藏暂缓的范围；非空账号画像/周期增量及 Firefox 安装验收转由 #295 跟踪。未发布新版本。
+
+- TikTok 全面复核：受测提交四项 CI 全绿（10316 passed），本地后端 426、手机 62、扩展 1814 项通过，真实发现/模型/推荐和桌面/手机展示续验通过。站内收藏按用户要求暂缓；非空真实画像/周期增量、Firefox 安装验收仍单列未完成，不宣称 full contract 通过。
+
+- TikTok 10 月 14 日已通过既有本地 reload 入口真正部署请求完成等待补丁，正式收藏仍未持久化；键盘入口请求 HTTP 200/业务状态 0 后刷新仍丢失，passport 会话验证有效，新安装包三 scope 均明确空态。补安装摘要与脱敏证据，非空画像/真实周期增量继续保留验收缺口。
+
+- TikTok 获准对另一条可播放视频执行单次收藏对照：即时金色书签在真正刷新后消失，本人收藏仍明确为空；补脱敏证据，原生持久化继续 FAIL，非空画像/真实周期增量继续 BLOCKED。既有修复 `12007157` 的四项 CI 已全绿，本轮未修改功能代码或部署扩展。
+
+- 按用户确认将 TikTok 网页历史改为可选：默认初始化和周期回拉只请求喜欢、收藏、关注，旧四范围任务不复用。修复正式 runtime 启动/热重载漏传 TikTok 来源开关导致周期任务不入队；补实际 runtime 周期/关闭回归和非空事件跨轮去重验证，真实空账号不合成画像。
+
+- TikTok 收藏时序修复：点击前被动观察原生请求，按钮乐观选中后等待请求完成再刷新，防止提前刷新打断请求；新文档持久化确认仍不可省略。回归已通过，真实网页请求业务成功但刷新未保存的问题仍保留为未通过验收。
+
+- TikTok 代理路由修复：默认 system 显式读取 macOS/环境代理，修复 libcurl 漏用系统代理、direct 继承环境代理及 custom 被 NO_PROXY 绕过；Web API、登录验证与封面统一适配。确认 Instagram/TikTok 网页操作沿用浏览器代理，后端设置不能替浏览器切换出口。
+
+- TikTok 10 月 13 日只读续验：保留首次正式收藏任务超时、只读诊断与恢复正式包复查均 empty/complete 的不同证据，未再执行上游写入；收藏持久化、非空画像及周期增量仍未完成真实验收。
+
+- TikTok 连续采集接收确认：页面先持久化恢复记录和指针再回复 task/scope ACK；后台不再把空返回当接收成功，缺失回执在原预算内重投同一只读 scope，避免导航或忙碌时静默丢任务。
+
+- TikTok 原生收藏实机续修：排除屏幕外预加载视频的按钮，优先点击唯一内层原生按钮，识别文字未更新的金色书签；TikTok 即时成功也必须刷新只读确认后才能入账，避免把乐观 UI 当作持久保存。已按具体视频授权执行真实请求，但刷新状态与账号收藏仍未确认持久化；非空画像/周期增量继续保留验收缺口。
+
+- TikTok 慢加载续修：原生收藏等待登录与内容共同就绪，不再把尚未加载的控件误报登出；延长已选中列表的内容等待。结果持久化后即释放采集锁，修复下一列表早于上一结果 ACK 到达时被忽略的问题。真实账号完整验收仍未通过，见 TikTok 验收台账。
+
+- TikTok 账号入口续修：兼容当前桌面页的三种显式空列表、设置页 session 身份和“通用”入口；内容脚本注册慢时有界重投。初始化不再复用普通 smoke、部分 scope 或失败结果。真实账号的完整四 scope、非空画像和站内收藏仍未全部通过，详见验收台账。
+
+- TikTok 账号采集续修：本人页标题与标签分阶段渲染时等待目标入口，避免提前报缺失；结果回传每次最多等待 10 秒，超时保留 FIFO 原文并允许下次重放，迟到 URL 解析不发送过期回调。真实喜欢页已选中，但列表与初始化/增量仍未通过验收。
+
+- TikTok 真实安装版验收补修：登录墙文字检测改为读取可见 `innerText`，避免 SSR/隐藏翻译脚本误报 `login_wall`；没有正向本人登录身份时仍拒绝采集；补上登录导航和本人资料标题的有界渲染等待，避免文档 complete 先于页面 hydration 时提前失败；兼容账号名位于 user-subtitle，并避免在本人页重复导航。
+
+- TikTok 真实环境验收补修：后端无 Cookie 启动后，扩展同步有效凭据会安全刷新发现客户端并挂载搜索，避免状态显示已登录但仍持有访客客户端；重复同步及 env 优先下的无效变更不触发重建。
+
+- TikTok full-source 验收修复：接通真实 bootstrap_profile 四 scope wire；限制本人列表、账号绑定与冻结预算；保留断网/超时 partial，整页导航恢复；普通 smoke 不写画像；收藏阻止 SPA 串视频。CLI 等待调整为 480 秒并同步后台标签页提示；补跨 Python/TypeScript 协议集成回归，账号真实 E2E 仍待浏览器连接恢复。
+
+- TikTok 验收全量回归补修：旧身份去重测试用运行时的新鲜发布日期验证时效证据成组保留，避免固定 2026-08-11 日期随时间过期导致失败；生产时效判断不变。
+
+- TikTok 契约澄清：passport 心跳用于发现凭据验证；账号任务依据浏览器 observed viewer 与后端账号边界，不将观察身份标成上游 verified。
+
+### 新增：TikTok full 升级收尾——契约测试反转与 audit 清零（2026-10-11）
+
+- `tests/test_tiktok_contract.py` 由「断言排除成立」整体改写为正向注册断言：`_PLATFORM_SOURCE_FIELDS` / 双 manifest content_scripts / `source_incremental_sync` 注册、native-save 不再是 local-only、guidedInit=true、dispatcher 任务标记与两阶段结果重投；契约登记的排除测试 `test_tiktok_engagement_danmaku_is_unavailable`（新建）与 `test_tiktok_media_deep_link_uses_https`（保留）精确存在并通过；移动端凭据排除保持正向「排除仍成立」。
+- audit `required_missing=0`：`extension.task` / `extension.background` 通过新增 canonical 路由键模块 `extension/src/content/tiktok/task-executor.ts`（re-export `tt/` 实现）并让 service-worker 经该路径引用类型而 PASS；`source-auth.capability-readiness` 通过 `_TIKTOK_CAPABILITY_AUTH_MODES`（discover=optional-credential，profile/bootstrap/incremental/native-save/cookie-sync=login-required）与 `auth_tiktok` 的 capabilities 投影 PASS；guided init 增加 tiktok profile 能力准入（未就绪时单独选择返回 `no_profile_signal_sources`，混合选择降级并保留公开发现）。
+- 文档同步：saved-sync / extension 模块的六平台表述更新为七平台（含 TikTok）；`tiktok.md` 补站内收藏与 capability 准入叙述；验收台账更新。
+- 同时收录并行落地的扩展侧提交：`8799b0aa`（tiktok-task-dispatcher + `content/tiktok.ts` / `tt/` DOM-only 采集管线）、`e65d7e21`（native-save executor 与 dispatcher 接线）、`0cb57594`（`ExtensionNativeSaveBroker` 注册与授权面，`TikTok Favorites` 目标）。
+
+### 新增：TikTok 接入 guided init 画像初始化（2026-10-11）
+
+- 解除排除：`_INIT_SOURCE_ORDER` 与 `init_prereqs._PLATFORM_SOURCE_FIELDS` 放行 tiktok，`web/shared/source-status.js` 的 `guidedInit` 翻为 `true`；setup / 桌面 / popup 的初始化来源清单由共享 roster 自动派生，setup 页补充 `tiktok_degraded` 文案。
+- CLI：`init` 新增 `--yes-tiktok` / `--no-tiktok`（`OPENBILICLAW_NO_TIKTOK=1` 优先于 `--yes-tiktok`），交互模式默认 N 并展示扩展 / 登录 / 焦点抢占准备清单；新增 `_enqueue_tiktok_bootstrap_task` / `_collect_tiktok_bootstrap_events`（默认等待 180 秒，`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS` 可调），init 第 1 阶段在 Instagram 之后串行采集点赞 / 收藏 / 观看历史 / 关注。
+- 画像链：事件经 `_tiktok_events_to_history_items` 进入画像构建（`source_platform=tiktok`），`InitResult` 增加 `tiktok_events` / `tiktok_scope_counts` / `tiktok_status`；`degraded` 按部分完成上报（CLI 面板与 API `tiktok_degraded` reason）；`ok` 终态 seed 增量调度时钟。
+- 测试：`tests/test_tiktok_guided_init.py` 覆盖准入、CLI 选项、collect 全状态分支与 init 全流程事件进画像；weibo / instagram / github 的 roster-parity 测试更新为「init 名单覆盖全部 share 来源」。
+
+### 新增：TikTok 升级为 full 来源——后端浏览器任务基建（2026-10-11）
+
+- 新增 `sources/tiktok_tasks.py`：`TiktokTaskQueue`（独立 `tiktok_tasks` 表，镜像抖音的 single-flight claim / 15 分钟 stale lease / 每日预算）与 bootstrap 事件转换；scope 为 `tt_like` / `tt_collect` / `tt_history` / `tt_follow`（仓库首个观看历史类 scope），事件映射 like→like、collect→favorite、history→view、follow→follow，信号强度 0.85 / 1.0 / 0.35 / 0.6。
+- 五处注册同步完成：`task_result_protocol._TASK_TABLES`（两阶段 staged completion）、`source_bootstrap._BOOTSTRAP_TASK_TABLES` 与 `enqueue_tiktok_bootstrap` / `seed_guided_init_attempts`（`empty` 证据不足不 seed）、`bootstrap_state` 的 `tiktok_seen_item_keys`、`source_incremental_sync` 的 `SOURCE_ORDER` / `_TASK_SPECS` / `_SOURCE_CONFIG_ALIASES` / `_SOURCE_INTERVAL_FIELDS`。
+- 新增 `GET /api/sources/tiktok/next-task`（bodyless 204）、`POST /api/sources/tiktok/task-result`（partial/ok/degraded/empty/failed，完整两阶段 staged completion）与 `POST /api/sources/tiktok/kick`。
+- 配置面：`sources.tiktok.incremental_enabled`（默认 `false`）与 `scheduler.tiktok_incremental_hours`（缺省继承全局）落地 dataclass / TOML 解析 / 校验 / `PUT /api/config` / `config.example.toml`；`source_incremental_enabled` 总开关默认关闭不变。
+- guided init 接线（`_INIT_SOURCE_ORDER` / `_PLATFORM_SOURCE_FIELDS`）与扩展执行器属于后续步骤；`tests/test_tiktok_contract.py` 的旧排除断言按升级验收台账在后续步骤统一反转。
+
 ### 修复：TikTok 来源交付验收（2026-10-04）
 
 - 修复插件来源关闭后无法重新开启：移除包裹启用框的卡片祖先 `aria-disabled`，保留停用卡片折叠限制；补执行真实状态同步函数的回归。

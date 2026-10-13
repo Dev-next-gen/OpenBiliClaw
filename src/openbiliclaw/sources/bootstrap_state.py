@@ -27,6 +27,8 @@ SOURCE_BOOTSTRAP_STATE_KEYS: dict[str, str] = {
     "weibo": "weibo_seen_item_keys",
     "instagram": "instagram_seen_item_keys",
     "ig": "instagram_seen_item_keys",
+    "tiktok": "tiktok_seen_item_keys",
+    "tt": "tiktok_seen_item_keys",
 }
 
 
@@ -45,6 +47,7 @@ def default_source_bootstrap_state() -> dict[str, object]:
         "weibo_account_key": "",
         "instagram_seen_item_keys": [],
         "instagram_account_key": "",
+        "tiktok_seen_item_keys": [],
         "last_source_bootstrap_sync_at": "",
         "source_incremental": {
             "cursor": "",
@@ -185,6 +188,7 @@ def normalize_source_bootstrap_state(loaded: Any) -> dict[str, object]:
         ),
         "instagram_seen_item_keys": merge_seen_keys(loaded.get("instagram_seen_item_keys", []), []),
         "instagram_account_key": instagram_account_key,
+        "tiktok_seen_item_keys": merge_seen_keys(loaded.get("tiktok_seen_item_keys", []), []),
         "last_source_bootstrap_sync_at": (
             loaded.get("last_source_bootstrap_sync_at", "").strip()
             if isinstance(loaded.get("last_source_bootstrap_sync_at", ""), str)

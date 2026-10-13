@@ -2629,6 +2629,7 @@ def test_instagram_api_rosters_match_source_policy() -> None:
     share_roster = _literal_module_assignment(app_path, "_SOURCE_SHARE_ORDER")
     init_roster = _literal_module_assignment(app_path, "_INIT_SOURCE_ORDER")
     assert share_roster[-1] == "instagram"
-    # TikTok is discovery-only: it participates in pool shares, not guided init.
+    # TikTok joined guided init with its account bootstrap queue; the init
+    # roster now covers every pool-share source.
     assert "tiktok" in share_roster
-    assert init_roster == tuple(slug for slug in share_roster if slug != "tiktok")
+    assert init_roster == tuple(share_roster)

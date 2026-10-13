@@ -92,6 +92,18 @@ _INSTAGRAM_CAPABILITY_AUTH_MODES: dict[str, CapabilityAuthMode] = {
     "bootstrap": "login-required",
     "cookie-sync": "optional-credential",
 }
+# Mirrors docs/platform-source-contract.tiktok.toml [auth.capability_modes]:
+# public discovery runs on the guest identity, while every account surface
+# (profile / bootstrap / incremental / native save) needs the signed-in
+# browser session whose evidence backend-side is the synced login cookie.
+_TIKTOK_CAPABILITY_AUTH_MODES: dict[str, CapabilityAuthMode] = {
+    "discover": "optional-credential",
+    "profile": "login-required",
+    "bootstrap": "login-required",
+    "incremental": "login-required",
+    "native-save": "login-required",
+    "cookie-sync": "login-required",
+}
 _V2EX_LOGIN_FRESH_HOURS = 72
 _LINUXDO_LOGIN_FRESH_HOURS = 72
 _HEARTBEAT_TTL_SECONDS = 72 * 3600
@@ -691,6 +703,64 @@ _TIKTOK_COOKIE_DETAIL: dict[str, str] = {
 }
 
 
+def _tiktok_capabilities(
+    personal_readiness: CapabilityReadiness,
+) -> dict[str, SourceCapabilityAuth]:
+    """Return guest discovery plus cookie-evidenced account capabilities.
+
+    Account tasks (profile / bootstrap / incremental / native save) execute
+    in the user's signed-in browser tab; the backend never replays the
+    session, so its pre-flight evidence is the extension-synced login cookie
+    plus the passport-beat probe verdict — ``login_state_path="credential"``
+    in the frozen contract.
+    """
+    personal_detail = (
+        "点赞、收藏、观看历史和关注列表只在用户已登录的 tiktok.com 标签页内"
+        "只读采集；Cookie 会话验证和浏览器本人列表证据分别确认。"
+    )
+    return {
+        "discover": SourceCapabilityAuth(
+            mode=_TIKTOK_CAPABILITY_AUTH_MODES["discover"],
+            required=True,
+            readiness="ready",
+            detail=(
+                "公开推荐流 / 创作者 / 话题标签走访客身份；配置登录 Cookie 后"
+                "可解锁关键词搜索与更高限额。"
+            ),
+        ),
+        "profile": SourceCapabilityAuth(
+            mode=_TIKTOK_CAPABILITY_AUTH_MODES["profile"],
+            required=True,
+            readiness=personal_readiness,
+            detail=personal_detail,
+        ),
+        "bootstrap": SourceCapabilityAuth(
+            mode=_TIKTOK_CAPABILITY_AUTH_MODES["bootstrap"],
+            required=True,
+            readiness=personal_readiness,
+            detail=personal_detail,
+        ),
+        "incremental": SourceCapabilityAuth(
+            mode=_TIKTOK_CAPABILITY_AUTH_MODES["incremental"],
+            required=True,
+            readiness=personal_readiness,
+            detail=personal_detail,
+        ),
+        "native-save": SourceCapabilityAuth(
+            mode=_TIKTOK_CAPABILITY_AUTH_MODES["native-save"],
+            required=True,
+            readiness=personal_readiness,
+            detail="站内收藏在已登录浏览器标签页内执行；后端只接收任务结果。",
+        ),
+        "cookie-sync": SourceCapabilityAuth(
+            mode=_TIKTOK_CAPABILITY_AUTH_MODES["cookie-sync"],
+            required=False,
+            readiness=personal_readiness,
+            detail="插件检测 sessionid 家族后同步登录证据；Cookie 值经统一凭据端点验证后落盘。",
+        ),
+    }
+
+
 def auth_tiktok(ctx: SourceAuthContext) -> SourceAuthContract:
     """TikTok: a public source with an *optional* login cookie.
 
@@ -729,6 +799,7 @@ def auth_tiktok(ctx: SourceAuthContext) -> SourceAuthContract:
             verify_method="none",
             verify_ttl_seconds=None,
             can_verify_now=False,
+            capabilities=_tiktok_capabilities("login_required"),
             detail=_TIKTOK_GUEST_DETAIL,
             legacy_state="no_auth",
             legacy_logged_in=True,
@@ -736,6 +807,18 @@ def auth_tiktok(ctx: SourceAuthContext) -> SourceAuthContract:
 
     origin: CredentialOrigin = "env" if os.environ.get(cookie_env, "").strip() else "data_file"
     verification, verified_at = _probe_verdict(ctx, "tiktok", credential="present", cookie=cookie)
+    # Account-capability readiness follows the cookie evidence: a rejected
+    # session is login_required again; a verified one is ready; anything else
+    # (never probed, lapsed success) is honest stale/unverified, not ready.
+    personal_readiness: CapabilityReadiness = (
+        "ready"
+        if verification == "verified"
+        else "login_required"
+        if verification == "failed"
+        else "stale"
+        if verification == "stale"
+        else "unverified"
+    )
     return SourceAuthContract(
         # Still False: a configured cookie is an *enhancement* (search,
         # limits), never a requirement — guest identity covers discovery.
@@ -747,10 +830,17 @@ def auth_tiktok(ctx: SourceAuthContext) -> SourceAuthContract:
         verified_at=verified_at,
         verify_ttl_seconds=_probe_ttl(verification),
         can_verify_now=True,
+        capabilities=_tiktok_capabilities(personal_readiness),
         detail=_TIKTOK_COOKIE_DETAIL.get(verification, _TIKTOK_COOKIE_DETAIL["unverified"]),
         legacy_state="no_auth",
         legacy_logged_in=True,
     )
+
+
+def tiktok_capability_readiness(ctx: SourceAuthContext) -> dict[str, SourceCapabilityAuth]:
+    """Public readiness helper shared by guided init and source status."""
+
+    return auth_tiktok(ctx).capabilities
 
 
 # ── Weibo ───────────────────────────────────────────────────────────

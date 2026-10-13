@@ -156,7 +156,7 @@ Likes tap 只接受当前 Likes 任务页上 `liked_media_screen / liked_refresh
 
 ### 页面资源连接故障的排查边界
 
-Instagram 页面和静态资源由浏览器通过系统/浏览器代理请求，项目的海外网络模式不会替浏览器切换出口。登录心跳、首页 HTTP 200 或画像模型请求成功，都不能证明 `static.cdninstagram.com` 的 JavaScript/CSS 已加载；真实观察过的失败形态是 document=200、正文为空、脚本 `ERR_CONNECTION_CLOSED`，最终 discovery 返回 `response_envelope_unobserved` 而不是合法空结果。
+Instagram 属海外来源；页面和静态资源默认沿用浏览器的系统/浏览器代理请求，项目的海外网络模式不会替浏览器切换出口。登录心跳、首页 HTTP 200 或画像模型请求成功，都不能证明 `static.cdninstagram.com` 的 JavaScript/CSS 已加载；真实观察过的失败形态是 document=200、正文为空、脚本 `ERR_CONNECTION_CLOSED`，最终 discovery 返回 `response_envelope_unobserved` 而不是合法空结果。
 
 诊断时应对失败页面实际引用的公共静态资源做有界请求，保留状态码、下载字节数与默认 TLS 验证结果；不保存 Cookie、headers 或完整含参数 URL。可用已有节点的独立探测区分当前出口与浏览器问题；只改项目配置、降低评分或延长等待不能修复上游 TLS 连接关闭。更换共享代理分组会影响其它海外流量，须明确确认范围，不关闭 Clash、不降低 TLS 校验、不自动改系统代理/订阅/规则。候选节点探测成功仍需真实页面与正式发现复验，不能代替端到端恢复。
 

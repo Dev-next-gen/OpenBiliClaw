@@ -4102,7 +4102,7 @@ def test_init_guides_missing_runtime_config_interactively(
     #   6. "y" — allow LAN access
     #   7-9. "" — accept Bili history/favorite/follow init limits
     #   10+. "n" — skip optional source prompts
-    #               (xhs / douyin / youtube / X / zhihu / reddit /
+    #               (xhs / douyin / youtube / tiktok / X / zhihu / reddit /
     #                Linux.do / v2ex / weibo / bangumi / GitHub / Instagram)
     wizard_input = (
         "\n".join(
@@ -4116,6 +4116,7 @@ def test_init_guides_missing_runtime_config_interactively(
                 "",
                 "",
                 "",
+                "n",
                 "n",
                 "n",
                 "n",
@@ -4207,13 +4208,13 @@ def test_init_guides_missing_auth_interactively(
     # test exercising the manual-paste path, send "2" first.
     # v0.3.89+: init asks whether to allow LAN access before the source
     # prompts. Answer yes, accept Bili signal-limit defaults, then send "n"
-    # to XHS / Douyin / YouTube / X / Zhihu / Reddit / Linux.do / V2EX /
+    # to XHS / Douyin / YouTube / TikTok / X / Zhihu / Reddit / Linux.do / V2EX /
     # Weibo / Bangumi / GitHub / Instagram so this test stays focused on the cookie-prompt
     # path.
     result = runner.invoke(
         app,
         ["init"],
-        input="2\nSESSDATA=valid\ny\n\n\n\n" + "n\n" * 12,
+        input="2\nSESSDATA=valid\ny\n\n\n\n" + "n\n" * 13,
     )
 
     assert result.exit_code == 1

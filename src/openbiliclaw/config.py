@@ -229,6 +229,7 @@ _SOURCE_INCREMENTAL_ENV_FIELDS = {
     "OPENBILICLAW_SCHEDULER_REDDIT_INCREMENTAL_HOURS": "reddit_incremental_hours",
     "OPENBILICLAW_SCHEDULER_LINUXDO_INCREMENTAL_HOURS": "linuxdo_incremental_hours",
     "OPENBILICLAW_SCHEDULER_V2EX_INCREMENTAL_HOURS": "v2ex_incremental_hours",
+    "OPENBILICLAW_SCHEDULER_TIKTOK_INCREMENTAL_HOURS": "tiktok_incremental_hours",
 }
 _DEFAULT_AUTO_UPDATE_ALLOWED_REMOTES = [
     "https://github.com/whiteguo233/OpenBiliClaw.git",
@@ -1033,6 +1034,7 @@ class SchedulerConfig:
     reddit_incremental_hours: int | None = None
     linuxdo_incremental_hours: int | None = None
     v2ex_incremental_hours: int | None = None
+    tiktok_incremental_hours: int | None = None
     refresh_check_interval_seconds: int = _DEFAULT_REFRESH_CHECK_INTERVAL_SECONDS
     eval_min_batch_size: int = _DEFAULT_EVAL_MIN_BATCH_SIZE
     eval_max_wait_seconds: float = _DEFAULT_EVAL_MAX_WAIT_SECONDS
@@ -1307,6 +1309,9 @@ class TiktokSourceConfig(SourceDatePreferenceConfig):
     """
 
     enabled: bool = False
+    # Per-source periodic account bootstrap switch. Defaults off; the global
+    # scheduler.source_incremental_enabled master must also be enabled.
+    incremental_enabled: bool = False
     # Backend selector: "auto" (web with yt-dlp fallback) | "web" | "ytdlp".
     mode: str = "auto"
     # Env var holding an optional TikTok login cookie; data/tiktok_cookie.json
@@ -2467,6 +2472,7 @@ def _build_config(
         ),
         tiktok=TiktokSourceConfig(
             enabled=bool(tiktok_raw.get("enabled", False)),
+            incremental_enabled=bool(tiktok_raw.get("incremental_enabled", False)),
             mode=str(tiktok_raw.get("mode", "auto")),
             cookie_env=str(tiktok_raw.get("cookie_env", "OPENBILICLAW_TIKTOK_COOKIE")),
             # Empty geo values are meaningless and would gate every request;
@@ -2929,6 +2935,11 @@ def _build_config(
                     ),
                     "v2ex_incremental_hours": _normalize_source_incremental_hours(
                         sched_raw.get("v2ex_incremental_hours"),
+                        default=None,
+                        allow_none=True,
+                    ),
+                    "tiktok_incremental_hours": _normalize_source_incremental_hours(
+                        sched_raw.get("tiktok_incremental_hours"),
                         default=None,
                         allow_none=True,
                     ),
@@ -4552,6 +4563,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
         ("reddit_incremental_hours", config.scheduler.reddit_incremental_hours, True),
         ("linuxdo_incremental_hours", config.scheduler.linuxdo_incremental_hours, True),
         ("v2ex_incremental_hours", config.scheduler.v2ex_incremental_hours, True),
+        ("tiktok_incremental_hours", config.scheduler.tiktok_incremental_hours, True),
     )
     for field_name, value, allow_none in incremental_intervals:
         try:
@@ -5795,6 +5807,7 @@ def save_config(
         ("reddit_incremental_hours", True),
         ("linuxdo_incremental_hours", True),
         ("v2ex_incremental_hours", True),
+        ("tiktok_incremental_hours", True),
     ):
         _normalize_source_incremental_hours(
             getattr(config.scheduler, field_name),
@@ -6085,6 +6098,7 @@ def _render_config_toml(
             "",
             "[sources.tiktok]",
             f"enabled = {_toml_bool(config.sources.tiktok.enabled)}",
+            f"incremental_enabled = {_toml_bool(config.sources.tiktok.incremental_enabled)}",
             f"mode = {_toml_string(config.sources.tiktok.mode)}",
             f"cookie_env = {_toml_string(config.sources.tiktok.cookie_env)}",
             f"region = {_toml_string(config.sources.tiktok.region)}",
@@ -6275,6 +6289,11 @@ def _render_config_toml(
             *(
                 [f"v2ex_incremental_hours = {config.scheduler.v2ex_incremental_hours}"]
                 if config.scheduler.v2ex_incremental_hours is not None
+                else []
+            ),
+            *(
+                [f"tiktok_incremental_hours = {config.scheduler.tiktok_incremental_hours}"]
+                if config.scheduler.tiktok_incremental_hours is not None
                 else []
             ),
             f"refresh_check_interval_seconds = {config.scheduler.refresh_check_interval_seconds}",

@@ -289,6 +289,9 @@ task shape、mode/scope 和 cap 由后端冻结。Discover 只接受 `topic` / `
 |---|---|---|
 | `POST /api/sources/bili/task-result` | ✅ | B 站扩展搜索任务 payload 带 `discovery_lane="recent"` 时，结果仍以 `source_strategy="bili-extension-search"` 进入统一 evaluator，同时保存 `source_context="bili-extension-search:recent"` 和 raw lane provenance；该标记不改变相关性、阈值或 admission。 |
 | `GET /api/sources/dy/next-task` | ✅ | 对 legacy discovery 的 `dy_tasks` 执行 durable source-wide single-flight：`BEGIN IMMEDIATE` 内若已有未超过 15 分钟的 `in_progress` lease，则返回 bodyless 204，不让另一个扩展 ID/Profile 领取第二条任务；过期或缺失 `claimed_at` 的 lease 可按 FIFO 重领。此门禁不涵盖先于 legacy queue 检查的 native-save job。 |
+| `GET /api/sources/tiktok/next-task` | ✅ | 对 `tiktok_tasks` 执行与抖音相同的 durable source-wide single-flight 领取（`BEGIN IMMEDIATE` + 15 分钟 stale lease 重领）；无任务返回 bodyless 204。scheduler 增量任务在来源或总开关关闭时先被标记 `failed`，不参与领取。 |
+| `POST /api/sources/tiktok/task-result` | ✅ | 接受扩展 dispatch 的 `partial / ok / degraded / empty / failed` 结果。`ok / degraded / empty`（`empty` 仅限 `bootstrap_profile`）走两阶段 staged completion：先在单事务冻结第一份 canonical payload 与 staged marker，再经 `tiktok_bootstrap_videos_to_events` 重放事件入口并写 seen-key，最后只翻 terminal status；`failed` 直接落终态。scope 映射：点赞→`like`、收藏→`favorite`、观看历史→`view`、关注→`follow`。 |
+| `POST /api/sources/tiktok/kick` | ✅ | 经 `/api/runtime-stream` 广播 `tiktok_task_available`，让扩展 dispatcher 立即轮询而不是等下一个 alarm；幂等、best-effort，失败不影响任务状态。 |
 
 抖音的 15 分钟 stale lease 与 producer 的 15 分钟基础设施失败退避来自 2026-08-09 真实扩展 E2E：正常任务约 15–35 秒，而执行上下文丢失会耗尽 180 秒 watchdog。它们是防止重复 claim/分钟级重试风暴的工程安全值，不是抖音官方限额；任务 watchdog、lease 或调度 cadence 改动时必须重新校准。
 
@@ -457,3 +460,19 @@ scheme 归一化的前提是入口能算出外部有效 host：反向代理保�
 `POST /api/chat/stream` 对 durable turn 在执行 lease 内重新读取状态：已完成/失败只重放；新回复也在 lease 内提交完成，防止 GET 触发的后台恢复与 SSE 重复摄取链接/学习。缺失 turn 或消息、会话等身份冲突提前拒绝。该保证覆盖并发与已完成请求重试，不扩展为任意中途取消的副作用 exactly-once 保证。
 
 服务未就绪等 lease 准入错误仍转换为 SSE 错误说明，未执行的 durable turn 保持 pending，不在未获得执行权时标成 completed。
+
+## TikTok 账号任务结果边界（2026-10-11）
+
+`GET /api/sources/tiktok/next-task` 返回冻结的 bootstrap_profile/scopes/max_items_per_scope/profile_update。`POST task-result` 的成功/partial/degraded 需 viewer_handle（可选 viewer_sec_uid）；后端规范化并散列 observed claim，首次绑定画像账号，跨任务切号返回 409 `tiktok_account_switch_requires_reset`，已 staged 的首份结果不被重试覆盖。`videos` 非数组返回 422；scope 与累计预算在后端限制，超额裁剪的最终结果标记 degraded，后续重试不能洗掉该状态。同一 handle 的可选 secUid 补齐/暂缺不改变 account_key，已知 secUid 冲突仍拒绝。
+
+仅 profile_update、incremental 或当前 init-owned 任务进入画像 ingress；普通 smoke 不写 seen、画像或全局账号绑定。账号身份不冒充上游 verified。协议桥与崩溃恢复测试见 [台账](../platform-source-acceptance.tiktok.md)。
+
+
+### TikTok 凭据同步与运行时刷新
+
+`POST /api/sources/tiktok/credential` 在真实验证和持久化之后比较有效凭据；发生变化时经现有 lane handoff 重建运行时，使启动时的访客客户端立即切换到登录态搜索。相同 Cookie 重投、或 env 优先导致有效凭据未变时不重启任务。`persist_credential` 用 `PersistResult.runtime_dirty` 传递这一差异。
+
+
+### TikTok 默认账号范围与周期启用（2026-10-13）
+
+`POST /api/init` 的 TikTok 默认范围是喜欢、收藏、关注，观看历史不再是必要输入；`next-task` / `task-result` 协议不变，显式历史任务仍按原契约执行。非空结果沿账号隔离、staged result 与幂等 ingress 进入 generic 画像消费路径，重复回调及下轮重复收藏不会重复写事件。正常 runtime 构建/热重载现在向周期调度器传递 TikTok 来源开关，保持全局和逐源双 opt-in，不新增端点或权限。

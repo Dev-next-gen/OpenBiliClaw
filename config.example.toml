@@ -376,6 +376,8 @@ min_interval_minutes = 3
 # TikTok 在海外，[network] mode 为 direct 时国内通常直连超时。
 [sources.tiktok]
 enabled = false
+# 扩展在线周期回拉开关。默认 false；需要同时开启 [scheduler] source_incremental_enabled。
+incremental_enabled = false
 # 后端选择："auto"（默认，Web API 优先、失败回退 yt-dlp）| "web"（仅 Web API）| "ytdlp"（仅 yt-dlp）。
 # Web API 后端走访客身份 + 请求签名（curl_cffi Chrome TLS 指纹），实测匿名可用：
 # 推荐流 / 创作者列表 / 话题标签列表；关键词搜索被上游 gate，需要登录 cookie。
@@ -622,6 +624,7 @@ douyin_incremental_hours = 0
 # reddit_incremental_hours = 24
 # linuxdo_incremental_hours = 24
 # v2ex_incremental_hours = 24
+# tiktok_incremental_hours = 24
 # --- Runtime refresh tuning ---
 refresh_check_interval_seconds = 60      # Main loop poll interval; values <15 fallback
 # eval_min_batch_size = 15               # Coalesce trickle candidates into fuller eval batches; 1..90

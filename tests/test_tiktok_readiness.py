@@ -13,6 +13,62 @@ from openbiliclaw.discovery.inspiration_provider import TiktokPlatformSearchBack
 from openbiliclaw.sources.tiktok_web import TiktokRouterClient, TiktokWebClient, TiktokWebResponse
 
 
+async def test_production_tiktok_incremental_wiring_survives_reload_and_respects_opt_in(
+    tmp_path: Path,
+) -> None:
+    """Use the actual runtime builder/queue, not a manually wired scheduler."""
+    import json
+    from datetime import UTC, datetime, timedelta
+
+    from openbiliclaw.api.runtime_context import build_runtime_context
+    from openbiliclaw.runtime.source_incremental_sync import SOURCE_ORDER
+    from openbiliclaw.sources.tiktok_tasks import TiktokTaskQueue
+
+    config = Config(data_dir=str(tmp_path / "runtime"))
+    config.llm.default_provider = "ollama"
+    config.llm.ollama.model = "test-unused"
+    ctx = build_runtime_context(config)
+    try:
+        scheduler = ctx.runtime_controller.source_incremental_sync
+        assert set(scheduler.source_enabled) == set(SOURCE_ORDER)
+        assert scheduler.source_enabled["tiktok"] is False
+        config.sources.tiktok.enabled = True
+        await ctx.rebuild_from_config(config)
+        scheduler = ctx.runtime_controller.source_incremental_sync
+        assert scheduler.source_enabled["tiktok"] is True
+        # Profile generation is covered separately; this regression is the
+        # production enabled-policy -> periodic queue -> cadence boundary.
+        scheduler.profile_ready = lambda: True
+        ctx.presence.on_connect()
+        now = datetime.now(UTC)
+        scheduler.clock = lambda: now
+        assert (await scheduler.tick()).reason == "source_incremental_disabled"
+        config.scheduler.source_incremental_enabled = True
+        assert (await scheduler.tick()).created is False
+        config.sources.tiktok.incremental_enabled = True
+        first = await scheduler.tick()
+        assert (first.reason, first.source) == ("created", "tiktok")
+        queue = TiktokTaskQueue(ctx.database)
+        row = queue.get(first.task_id)
+        assert json.loads(row["payload_json"])["scopes"] == ["tt_like", "tt_collect", "tt_follow"]
+        assert (await scheduler.tick()).reason == "active_task"
+        queue.stage_final_result(first.task_id, terminal_status="ok")
+        queue.complete_staged_result(first.task_id)
+        assert (await scheduler.tick()).reason == "not_due"
+        state = ctx.memory_manager.load_source_bootstrap_state()
+        assert state["source_incremental"]["last_success_at"]["tiktok"]
+        now += timedelta(hours=25)
+        second = await scheduler.tick()
+        assert second.created and second.task_id != first.task_id
+        config.scheduler.source_incremental_enabled = False
+        assert (await scheduler.tick()).reason == "source_incremental_disabled"
+        assert queue.get(second.task_id)["status"] == "failed"
+    finally:
+        if ctx.dialogue_settlement_queue is not None:
+            await ctx.dialogue_settlement_queue.shutdown(timeout=1)
+        ctx.database.close()
+
+
 async def test_forced_web_does_not_fall_back_after_breaker_opens() -> None:
     web = SimpleNamespace(get_tag_videos=AsyncMock(return_value=None))
     fallback = SimpleNamespace(get_tag_videos=AsyncMock(return_value=[]))

@@ -102,6 +102,15 @@
         },
         {
             "matches": [
+                "*://*.tiktok.com/*"
+            ],
+            "js": [
+                "dist/content/tiktok.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
                 "*://*.youtube.com/*"
             ],
             "js": [
