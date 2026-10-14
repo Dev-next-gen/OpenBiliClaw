@@ -168,8 +168,8 @@ def build_canonical_evaluation_batch(
 
         for field in _OPTIONAL_STRING_FIELDS:
             value = source.get(field)
-            if isinstance(value, str) and value:
-                item[field] = _sanitize_wire_text(value)
+            if isinstance(value, str) and (sanitized := _sanitize_wire_text(value)):
+                item[field] = sanitized
         for field in _OPTIONAL_POSITIVE_INTEGER_FIELDS:
             value = source.get(field)
             if _is_positive_integer(value):

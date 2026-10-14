@@ -239,6 +239,26 @@ def test_canonical_sparse_batch_omits_list_field_when_all_entries_sanitize_empty
     assert "tags" not in batch.items[0]
 
 
+def test_canonical_sparse_batch_omits_text_field_that_sanitizes_empty() -> None:
+    batch = build_canonical_evaluation_batch(
+        [
+            {
+                "source_platform": "bilibili",
+                "content_type": "video",
+                "title": "candidate",
+                "author_name": "author",
+                "description": "\x00",
+                "body_text": "\x0b\x7f",
+                "published_at": "\x00",
+            }
+        ]
+    )
+
+    assert "description" not in batch.items[0]
+    assert "body_text" not in batch.items[0]
+    assert "published_at" not in batch.items[0]
+
+
 def test_canonical_sparse_batch_replaces_lone_surrogates() -> None:
     batch = build_canonical_evaluation_batch(
         [
